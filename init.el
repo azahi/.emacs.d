@@ -435,6 +435,8 @@
 
 ;;; External packages.
 
+(use-package auto-minor-mode)
+
 (use-package better-jumper
   :hook (e-first-input . better-jumper-mode)
   :hook (better-jumper-post-jump . recenter)
@@ -766,12 +768,18 @@
 
 ;;; External packages.
 
+(use-package hide-mode-line
+  :hook (Man-mode-hook . hide-mode-line-mode)
+  :hook (completion-list-mode-hook . hide-mode-line-mode))
+
 (use-package highlight-numbers
   :hook ((prog-mode conf-mode) . highlight-numbers-mode)
   :config (setq highlight-numbers-generic-regexp "\\_<[[:digit:]]+\\(?:\\.[0-9]*\\)?\\_>"))
 
 (use-package rainbow-delimiters
   :init (setq rainbow-delimiters-max-face-count 3))
+
+(use-package restart-emacs)
 
 ;;
 ;;; Keybnidings.
@@ -840,7 +848,6 @@
 ;;
 ;;; Projectile.
 ;;
-
 
 (defvar e-projectile-cache-limit 10000)
 (defvar e-projectile-cache-blacklist '("~" "/tmp" "/"))
