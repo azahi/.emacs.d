@@ -740,7 +740,7 @@
 
 (use-package winner
   :preface (defvar winner-dont-bind-my-keys t)
-  :hook (doom-first-buffer . winner-mode))
+  :hook (e-first-buffer . winner-mode))
 
 (use-package paren
   :hook (e-first-buffer . show-paren-mode)
@@ -761,7 +761,7 @@
           (newline-mark ?\n [?¬ ?\n])
           (space-mark ?\  [?·] [?.])))
 
-  (defun doom-disable-whitespace-mode-in-childframes-a (orig-fn)
+  (defun e-disable-whitespace-mode-in-childframes-a (orig-fn)
     (unless (frame-parameter nil 'parent-frame)
       (funcall orig-fn)))
   (add-function :around whitespace-enable-predicate #'e-disable-whitespace-mode-in-childframes-a))
@@ -946,6 +946,135 @@
   (advice-add #'projectile-default-generic-command :around
     (lambda (orig-fn &rest args))
       (ignore-errors (apply orig-fn args))))
+
+;;
+;;; EViL.
+;;
+
+(use-package evil
+  :demand t
+  :preface
+  (setq evil-want-visual-char-semi-exclusive t
+        evil-ex-search-vim-style-regexp t
+        evil-ex-visual-char-range t
+        evil-mode-line-format 'nil
+        evil-symbol-word-search t
+        evil-default-cursor 'box
+        evil-normal-state-cursor 'box
+        evil-emacs-state-cursor  'box
+        evil-insert-state-cursor 'bar
+        evil-visual-state-cursor 'hollow
+        evil-ex-interactive-search-highlight 'selected-window
+        evil-kbd-macro-suppress-motion-error t)
+  ;; For `evil-collection`.
+  (setq evil-want-integration t
+        evil-want-keybinding nil)
+  :config
+  (evil-select-search-module 'evil-search-module 'evil-search)
+
+  (put 'evil-define-key* 'lisp-indent-function 'defun)
+
+  ;; https://bitbucket.org/lyro/evil/issue/336/osx-visual-state-copies-the-region-on
+  ;; http://stackoverflow.com/questions/15873346/elisp-rename-macro
+  (advice-add #'evil-visual-update-x-selection :override #'ignore)
+
+  ;; Start help-with-tutorial in Emacs state.
+  (advice-add #'help-with-tutorial :after (lambda (&rest _) (evil-emacs-state +1)))
+
+  ;; Shorter messages.
+  (unless noninteractive
+    (setq save-silently t)
+    (add-hook 'after-save-hook
+      (lambda ()
+        (message "\"%s\" %dL, %dC written"
+                 (if buffer-file-name
+                     (file-relative-name (file-truename buffer-file-name) (e-project-root))
+                   (buffer-name))
+                 (count-lines (point-min) (point-max))
+                 (buffer-size)))))
+
+  (evil-mode +1))
+
+(use-package evil-collection
+  :after evil
+  :init (setq evil-collection-company-use-tng t)
+  :config (evil-collection-init))
+
+(use-package evil-args)
+
+(use-package evil-easymotion)
+
+(use-package evil-embrace)
+
+(use-package evil-escape
+  :commands evil-escape
+  :init
+  (setq evil-escape-excluded-states '(normal visual multiedit emacs motion)
+        evil-escape-excluded-major-modes '(neotree-mode treemacs-mode vterm-mode)
+        evil-escape-key-sequence "jk"
+        evil-escape-delay 0.15)
+  (evil-define-key* '(insert replace visual operator) 'global "\C-g" #'evil-escape)
+  :config
+  ;; No `evil-escape' in minibuffer.
+  (add-hook 'evil-escape-inhibit-functions
+    (lambda ()
+      (and (minibufferp)
+           (or (not (bound-and-true-p evil-collection-setup-minibuffer))
+               (evil-normal-state-p)))))
+  (evil-escape-mode +1))
+
+(use-package evil-exchange
+  :commands evil-exchange
+  :config
+  (add-hook 'e-escape-hook
+    (lambda ()
+      (when evil-exchange--overlays
+        (evil-exchange-cancel)
+        t))))
+
+(use-package evil-indent-plus)
+
+(use-package evil-lion)
+
+(use-package evil-nerd-commenter
+  :commands (evilnc-comment-operator
+             evilnc-inner-comment
+             evilnc-outer-commenter))
+
+(use-package evil-snipe
+  :commands (evil-snipe-mode
+             evil-snipe-override-mode
+             evil-snipe-local-mode
+             evil-snipe-override-local-mode)
+  :init
+  (setq evil-snipe-smart-case t
+        evil-snipe-scope 'line
+        evil-snipe-repeat-scope 'visible
+        evil-snipe-char-fold t)
+  :config
+  (evil-snipe-mode +1)
+  (evil-snipe-override-mode +1))
+
+(use-package evil-surround
+  :commands (global-evil-surround-mode
+             evil-surround-edit
+             evil-Surround-edit
+             evil-surround-region)
+  :config (global-evil-surround-mode 1))
+
+(use-package evil-traces
+  :after evil-ex
+  :config
+  (evil-traces-mode))
+
+(use-package evil-visualstar
+  :commands (evil-visualstar/begin-search
+             evil-visualstar/begin-search-forward
+             evil-visualstar/begin-search-backward)
+  :init
+  (evil-define-key* 'visual 'global
+    "*" #'evil-visualstar/begin-search-forward
+    "#" #'evil-visualstar/begin-search-backward))
 
 ;;
 ;;; Finalize.
