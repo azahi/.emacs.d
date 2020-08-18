@@ -1077,6 +1077,40 @@
     "#" #'evil-visualstar/begin-search-backward))
 
 ;;
+;;; IRC.
+;;
+
+(use-package erc
+  :disabled)
+
+(use-package circe
+  :commands circe circe-server-buffers
+  :config
+  (setq circe-default-quit-message nil
+        circe-default-part-message nil
+        circe-use-cycle-completion t
+        circe-reduce-lurker-spam t)
+
+  (add-hook 'circe-mode-hook #'turn-off-smartparens-mode))
+
+;;
+;;; Pass.
+;;
+
+(use-package pass
+  :config (auth-source-pass-enable))
+
+(use-package password-store
+  :init (setq password-store-password-length 12)
+  :config
+  (advice-add #'auth-source-pass--read-entry :override
+    (lambda ()
+      (with-temp-buffer
+        (insert-file-contents
+        (expand-file-name (format "%s.gpg" entry) (password-store-dir)))
+        (buffer-substring-no-properties (point-min) (point-max))))))
+
+;;
 ;;; Finalize.
 ;;
 
