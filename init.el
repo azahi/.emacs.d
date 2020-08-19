@@ -1305,6 +1305,8 @@
 ;;; Flyspell.
 ;;
 
+(defvar ispell-dictionary "en_US")
+
 (use-package ispell
   :config
   (pcase (cond ((executable-find "aspell")   'aspell)
@@ -1368,3 +1370,62 @@
   (setq flyspell-lazy-idle-seconds 1
         flyspell-lazy-window-idle-seconds 3)
   (flyspell-lazy-mode +1))
+
+(use-package langtool
+  :commands (langtool-check
+             langtool-check-done
+             langtool-show-message-at-point
+             langtool-correct-buffer)
+  :init (setq langtool-default-language "en-US")
+  :config (setq langtool-bin "/usr/bin/languagetool")) ;; TODO Support for multiple machines.
+
+(use-package writegood-mode
+  :hook (org-mode markdown-mode rst-mode asciidoc-mode latex-mode))
+
+;;
+;;; Flycheck.
+;;
+
+(use-package flycheck
+  :commands (flycheck-list-errors flycheck-buffer)
+  :hook (emacs-startup . global-flycheck-mode)
+  :config
+  (setq flycheck-emacs-lisp-load-path 'inherit)
+
+  ;; Check only when saving or opening files
+  (setq flycheck-check-syntax-automatically '(save mode-enabled idle-buffer-switch))
+
+  ;; For the above functionality, check syntax in a buffer that you switched to
+  ;; only briefly.
+  (setq flycheck-buffer-switch-check-intermediate-buffers t)
+
+  ;; Display errors a little quicker.
+  (setq flycheck-display-errors-delay 0.25)
+
+  ;; ESC buffer.
+  (add-hook 'e-escape-hook :append
+    (lambda (&rest _)
+      (when flycheck-mode
+        (ignore-errors (flycheck-buffer))
+        nil))))
+
+(use-package flycheck-popup-tip
+  :commands (flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup)
+  :hook (flycheck-mode . e-flycheck-init-popups)
+  :config
+  (defun e-flycheck-init-popups (&rest _)
+    (unless (and (bound-and-true-p
+                  lsp-ui-mode
+                  lsp-ui-sideline-enable)
+      (flycheck-popup-tip-mode +1))))
+
+  (with-eval-after-load 'evil
+    ;; Don't display popups while in insert or replace mode.
+    (add-hook #'flycheck-popup-tip-delete-popup '(evil-insert-state-entry-hook
+                                                  evil-replace-state-entry-hook))
+    (advice-add #'flycheck-popup-tip-show-popup :before-while
+      (lambda (&rest _)
+        (if evil-local-mode
+            (eq evil-state 'normal)
+          (not (bound-and-true-p company-backend)))))))
+
