@@ -1,6 +1,6 @@
 ;;; init.el -*- lexical-binding: t; -*-
 
-;; Prevent GC from running before `ghcm-mode'.
+;; Prevent garbage collection from running before invoking `ghcm-mode'.
 (setq gc-cons-threshold most-positive-fixnum)
 
 ;;
@@ -17,17 +17,6 @@
 ;; Ensure running from file's directory.
 (let (file-name-handler-alist)
   (setq user-emacs-directory (file-name-directory load-file-name)))
-
-;; Noop `file-name-handler-alist' to increase I/O performace.
-(unless noninteractive
-  (defvar e-initial-file-name-handler-alist file-name-handler-alist)
-
-  (setq file-name-handler-alist nil)
-  (defun e-reset-file-handler-alist-h ()
-    (dolist (handler file-name-handler-alist)
-      (add-to-list 'e-initial-file-name-handler-alist handler))
-    (setq file-name-handler-alist e-initial-file-name-handler-alist))
-  (add-hook 'emacs-startup-hook #'e-reset-file-handler-alist-h))
 
 (defconst e-emacs-dir
   (eval-when-compile (file-truename user-emacs-directory)))
@@ -70,18 +59,7 @@
 ;; Makes tramp a lot faster.
 (setq tramp-default-method "ssh")
 
-;; I don't understand why GNU always makes these kinds of poor descisions
-;; regarding pretty much everything including *security*. I will never in my
-;; life recommend anyone using anything by GNU. GNU, despite the fact that it
-;; changed the world of computing, is a mistake. I only use Emacs because I like
-;; `org-mode', in-place lisp evaluation, macros and a couple of unified features
-;; I can use in all major-modes, other than that Emacs is a pain to make usable
-;; and maintain. If you consider picking up a _power-user_ editor, just go for
-;; NeoVim, don't play around with this shit, it doesn't worth your time. I
-;; supposed to write a meaningful comment here regarding SSL in Emacs but it
-;; turned to be a rant. I just can't take it anymore. I want someone to make a
-;; proper org-mode plugin for Vim with shit like CalDAV and pandoc importers and
-;; etc.
+;; Security.
 (setq gnutls-verify-error t
       gnutls-algorithm-priority
       (when (boundp 'libgnutls-version)
@@ -102,7 +80,7 @@
 (setq auth-sources (list (concat e-etc-dir "authinfo.gpg")
                          "~/.authinfo.gpg"))
 
-;; Littering.
+;; No littering in my swamp.
 (setq abbrev-file-name                      (concat e-local-dir "abbrev.el")
       async-byte-compile-log-file           (concat e-etc-dir "async-bytecomp.log")
       bookmark-default-file                 (concat e-etc-dir "bookmarks")
@@ -121,60 +99,30 @@
       url-configuration-directory           (concat e-etc-dir "url/"))
 
 ;; Stop sessions from littering the user directory.
-(defun e-use-cache-dir (session-id)
-  (concat e-cache-dir "emacs-session." session-id))
-(advice-add 'emacs-session-filename :override #'e-use-cache-dir)
+(advice-add 'emacs-session-filename :override
+  (lambda (&rest _)
+    (concat e-cache-dir "emacs-session." sessoin-id)))
 
-;; When enabling disabled commands write them to config.el instead.
-(defun e-save-enabled-commands-to-custom (orig-fn &rest args)
-  (let ((user-init-file custom-file))
-    (apply orig-fn args)))
-(advice-add #'en/disable-command :around #'e-save-enabled-commands-to-custom)
+;; When enabling disabled commands write them to `config.el' instead.
+(advice-add #'en/disable-command :around
+  (lambda (orig-fn &rest args)
+    (let ((use-init-file custom-file))
+      (apply orig-fn args))))
 
 ;;
 ;;; Optimization.
 ;;
 
-;; Disable bidirectional text rendering.
-(setq-default bidi-display-reordering 'left-to-right
-              bidi-paragraph-direction 'left-to-right
-              bidi-inhibit-bpa t)
-
-;; Reduce rendering/line scan work for Emacs by not rendering cursors or regions
-;; in non-focused windows.
-(setq-default cursor-in-non-selected-windows nil)
-(setq highlight-nonselected-windows nil)
-
-;; Rrapid scrolling over unfontified regions.
-(setq fast-but-imprecise-scrolling t)
-
-;; Resizing the Emacs frame.
-(setq frame-inhibit-implied-resize t)
-
 ;; Don't ping things that look like domain names.
 (setq ffap-machine-p-known 'reject)
-
-;; Font compacting can be terribly expensive.
-(setq inhibit-compacting-font-caches t)
 
 ;; Defer `tty-run-terminal-initialization'.
 (unless (daemonp)
   (advice-add #'tty-run-terminal-initialization :override #'ignore)
   (add-hook 'window-setup-hook
-    (lambda ()
+    (lambda (&rest _)
       (advice-remove #'tty-run-terminal-initialization #'ignore)
       (tty-run-terminal-initialization (selected-frame) nil t))))
-
-(defvar e-inhibit-local-var-hooks nil)
-(defun e-run-local-var-hooks-h ()
-  (unless e-inhibit-local-var-hooks
-    (set (make-local-variable 'e-inhibit-local-var-hooks) t)
-    (run-hook-wrapped (intern-soft (format "%s-local-vars-hook" major-mode))
-                      #'e-try-run-hook)))
-
-(defun e-run-local-var-hooks-maybe-h ()
-  (unless enable-local-variables
-    (e-run-local-var-hooks-h)))
 
 ;;
 ;;; Package.
@@ -189,7 +137,7 @@
           ("melpa" . ,(concat proto "://melpa.org/packages/"))
           ("org"   . ,(concat proto "://orgmode.org/elpa/")))))
 
-;; Prevent init.el modification.
+;; Prevent `init.el' modification by `package.el'.
 (advice-add #'package--ensure-init-file :override #'ignore)
 
 ;;
@@ -199,28 +147,22 @@
 (setq straight-base-dir e-local-dir
       straight-repository-branch "develop")
 
-(with-eval-after-load 'straight
-  (add-to-list 'straight-built-in-pseudo-packages 'let-alist))
-
-;; This is a hacky hack I stole from doom-emacs.
-;; TODO Replace with pure elisp.
-(defun e-call-process (command &rest args)
-  (with-temp-buffer
-    (cons (or (apply #'call-process command nil t nil (remq nil args))
-              -1)
-          (string-trim (buffer-string)))))
-
-;; Ensure straight.el
-(defun e-ensure-straight ()
+;; Ensure `straight.el'.
+(defun e-ensure-straight (&rest _)
   (let ((repo-dir (expand-file-name "straight/repos/straight.el" straight-base-dir ))
-        (repo-url (concat "http" (if gnutls-verify-error "s")
-                          "://github.com/raxod502/straight.el"))
+        (repo-url (concat "http" (if gnutls-verify-error "s") "://github.com/raxod502/straight.el"))
         (branch straight-repository-branch)
-        (call #'e-call-process))
+        (call (lambda (command &rest args)
+                (with-temp-buffer
+                  (cons (or (apply #'call-process command nil t nil (remq nil args))
+                            -1)
+                        (string-trim (buffer-string)))))))
     (unless (file-directory-p repo-dir)
-      (funcall call "git" "clone" "--origin" "origin" repo-url repo-dir
+      (funcall call "git" "clone" repo-url repo-dir
+               "--origin" "origin"
                "--branch" straight-repository-branch
-               "--single-branch" "--no-tags"))
+               "--single-branch"
+               "--no-tags"))
     (require 'straight (concat repo-dir "/straight.el"))
     (with-temp-buffer
       (insert-file-contents (expand-file-name "bootstrap.el" repo-dir))
@@ -232,19 +174,17 @@
 ;;; Use-package.
 ;;
 
-(with-eval-after-load 'straight
-  (straight-use-package 'use-package))
+(straight-use-package 'use-package)
 
 (autoload 'use-package "use-package-core" nil nil t)
 
-  (setq use-package-compute-statistics nil
-        use-package-verbose nil
-        use-package-minimum-reported-time 0.1
-        use-package-expand-minimally t)
+(setq use-package-compute-statistics nil
+      use-package-verbose nil
+      use-package-minimum-reported-time 0.1
+      use-package-expand-minimally t)
 
-(with-eval-after-load 'use-package-core
-  ;; Activate straight.el integration.
-  (setq straight-use-package-by-default t))
+;; Activate straight.el integration.
+(setq straight-use-package-by-default t)
 
 ;;
 ;;; GC.
@@ -271,7 +211,7 @@
 ;; Create missing directories when we open a file that doesn't exist under a
 ;; directory tree that may not exist.
 (add-hook 'find-file-not-found-functions
-  (lambda ()
+  (lambda (&rest _)
     (unless (file-remote-p buffer-file-name)
       (let ((parent-directory (file-name-directory buffer-file-name)))
         (and (not (file-directory-p parent-directory))
@@ -288,16 +228,16 @@
       auto-save-file-name-transforms `((".*" ,auto-save-list-file-prefix t))
       backup-directory-alist `((".*" . ,(concat e-cache-dir "backup/"))))
 
+(with-eval-after-load 'tramp
+  (add-to-list 'backup-directory-alist (cons tramp-file-name-regexp nil)))
+
 (add-hook 'after-save-hook
-  (lambda ()
+  (lambda (&rest _)
     (when (eq major-mode 'fundamental-mode)
       (let ((buffer (or (buffer-base-buffer) (current-buffer))))
         (and (buffer-file-name buffer)
              (eq buffer (window-buffer (selected-window)))
              (set-auto-mode))))))
-
-(eval-after-load 'tramp
-  (add-to-list 'backup-directory-alist (cons tramp-file-name-regexp nil)))
 
 ;;; Formatting.
 
@@ -336,30 +276,26 @@
 ;;; Built-in packages.
 
 (use-package autorevert
-  :hook (focus-in . e-auto-revert-buffers-h)
-  :hook (after-save . e-auto-revert-buffers-h)
-  ;:hook (e-switch-buffer . e-auto-revert-buffer-h)
-  ;:hook (e-switch-window . e-auto-revert-buffer-h)
+  :hook (focus-in . e-auto-revert-buffers)
+  :hook (after-save . e-auto-revert-buffers)
   :config
   (setq auto-revert-verbose t
         auto-revert-use-notify nil
         auto-revert-stop-on-user-input nil
         revert-without-query (list "."))
 
-  (defun e-auto-revert-buffer-h ()
-    "Auto revert current buffer, if necessary."
+  (defun e-auto-revert-buffer ()
     (unless (or auto-revert-mode (active-minibuffer-window))
       (let ((auto-revert-mode t))
         (auto-revert-handler))))
 
-  (defun e-auto-revert-buffers-h ()
-    "Auto revert stale buffers in visible windows, if necessary."
+  (defun e-auto-revert-buffers ()
     (dolist (buf (e-visible-buffers))
       (with-current-buffer buf
-        (e-auto-revert-buffer-h)))))
+        (e-auto-revert-buffer)))))
 
 (use-package recentf
-  :hook (e-first-file . recentf-mode)
+  :hook (emacs-startup . recentf-mode)
   :commands recentf-open-files
   :config
   (defun e-recent-file-truename (file)
@@ -367,61 +303,50 @@
             (not (file-remote-p file)))
         (file-truename file)
       file))
-  (setq recentf-filename-handlers
-        '(substring-no-properties
-          e-recent-file-truename
-          abbreviate-file-name)
+  (setq recentf-filename-handlers '(substring-no-properties
+                                     e-recent-file-truename
+                                     abbreviate-file-name)
         recentf-save-file (concat e-cache-dir "recentf")
         recentf-auto-cleanup 'never
         recentf-max-menu-items 0
         recentf-max-saved-items 200)
 
-  (add-hook 'e-switch-window-hook
-    (lambda ()
-      (when buffer-file-name
-        (recentf-add-file buffer-file-name))
-      nil))
-
   (add-hook 'dired-mode-hook
-    (lambda ()
+    (lambda (&rest _)
       (recentf-add-file default-directory)))
 
   (add-hook 'kill-emacs-hook #'recentf-cleanup))
 
 (use-package savehist
-  :hook (e-first-input . savehist-mode)
+  :hook (emacs-startup . savehist-mode)
   :init
   (setq savehist-file (concat e-cache-dir "savehist"))
   :config
   (setq savehist-save-minibuffer-history t
         savehist-autosave-interval nil
-        savehist-additional-variables
-        '(kill-ring
-          mark-ring
-          global-mark-ring
-          search-ring
-          regexp-search-ring))
+        savehist-additional-variables '(kill-ring
+                                        mark-ring
+                                        global-mark-ring
+                                        search-ring
+                                        regexp-search-ring))
   (add-hook 'savehist-save-hook
-    (lambda ()
+    (lambda (&rest _)
       (setq kill-ring (cl-loop for item in kill-ring
                                if (stringp item)
                                collect (substring-no-properties item)
                                else if item collect it)))))
 
 (use-package saveplace
-  :hook (e-first-file . save-place-mode)
+  :hook (pre-command . save-place-mode)
   :init
   (setq save-place-file (concat e-cache-dir "saveplace")
         save-place-limit 100)
   :config
-  (defun e-recenter-on-load-saveplace-a (&rest _)
-    (if buffer-file-name (ignore-errors (recenter))))
-  (advice-add #'save-place-find-file-hook :after-while #'e-recenter-on-load-saveplace-a)
+  (advice-add #'save-place-find-file-hook :after-while
+    (lambda (&rest _)
+      (if buffer-file-name (ignore-errors (recentr)))))
 
-  (defun e-inhibit-saveplace-in-long-files-a (orig-fn &rest args)
-    (unless e-large-file-p
-      (apply orig-fn args)))
-  (advice-add #'save-place-to-alist :around #'e-inhibit-saveplace-in-long-files-a))
+  (save-place-mode))
 
 (use-package server
   :when (display-graphic-p)
@@ -438,19 +363,17 @@
 (use-package auto-minor-mode)
 
 (use-package better-jumper
-  :hook (e-first-input . better-jumper-mode)
+  :hook (emacs-startup . better-jumper-mode)
   :hook (better-jumper-post-jump . recenter)
-  :commands e-set-jump-a e-set-jump-maybe-a e-set-jump-h
-  :init
-  (global-set-key [remap evil-jump-forward]  #'better-jumper-jump-forward)
-  (global-set-key [remap evil-jump-backward] #'better-jumper-jump-backward)
-  (global-set-key [remap xref-pop-marker-stack] #'better-jumper-jump-backward)
+  :commands (e-set-jump e-set-jump-maybe)
   :config
-  (defun e-set-jump-a (orig-fn &rest args)
+  (defun e-set-jump (orig-fn &rest args)
     (better-jumper-set-jump (if (markerp (car args)) (car args)))
     (let ((evil--jumps-jumping t)
           (better-jumper--jumping t))
       (apply orig-fn args)))
+  (advice-add #'kill-current-buffer :around #'e-set-jump)
+  (advice-add #'imenu :around #'e-set-jump-a)
 
   (defun e-set-jump-maybe-a (orig-fn &rest args)
     (let ((origin (point-marker))
@@ -464,15 +387,7 @@
            (if (markerp (car args))
                (car args)
              origin))))
-      result))
-
-  (defun e-set-jump-h ()
-    (better-jumper-set-jump)
-    nil)
-
-  (advice-add #'kill-current-buffer :around #'e-set-jump-a)
-
-  (advice-add #'imenu :around #'e-set-jump-a))
+      result)))
 
 (use-package dtrt-indent
   :hook ((change-major-mode-after-body read-only-mode) . e-detect-indentation-h)
@@ -512,8 +427,8 @@
   :hook (recenter . imenu-after-jump-hook))
 
 (use-package smartparens
-  :hook (e-first-buffer . smartparens-global-mode)
-  :commands sp-pair sp-local-pair sp-with-modes sp-point-in-comment sp-point-in-string
+  :hook (prog-mode . smartparens-mode)
+  :commands (sp-pair sp-local-pair sp-with-modes sp-point-in-comment sp-point-in-string)
   :config
   ;; Recognize both `slime-mrepl-mode' and `sly-mrepl-mode'.
   (add-to-list 'sp-lisp-modes 'sly-mrepl-mode)
@@ -532,15 +447,15 @@
   (setq sp-max-prefix-length 25
         sp-max-pair-length 4)
 
-  ;; https://github.com/Fuco1/smartparens/issues/783.
+  ;; https://github.com/Fuco1/smartparens/issues/783
   (setq sp-escape-quotes-after-insert nil)
 
-  ;; Quiet.
+  ;; Be quiet.
   (dolist (key '(:unmatched-expression :no-matching-tag))
     (setf (alist-get key sp-message-alist) nil))
 
   (add-hook 'minibuffer-setup-hook
-    (lambda ()
+    (lambda (&rest _)
       (and (memq this-command '(eval-expression pp-eval-expression evil-ex))
            smartparens-global-mode
            (smartparens-mode))))
@@ -552,36 +467,22 @@
   ;; Breakage in evil-mode's replace state.
   (defvar e-buffer-smartparens-mode nil)
   (add-hook 'evil-replace-state-exit-hook
-    (lambda ()
+    (lambda (&rest _)
       (when e-buffer-smartparens-mode
         (turn-on-smartparens-mode)
         (kill-local-variable 'e-buffer-smartparens-mode))))
   (add-hook 'evil-replace-state-entry-hook
-    (lambda ()
+    (lambda (&rest _)
       (when smartparens-mode
         (setq-local e-buffer-smartparens-mode t)
         (turn-off-smartparens-mode)))))
 
 (use-package ws-butler
-  :hook (e-first-buffer . ws-butler-global-mode))
+  :hook (prog-mode . ws-butler-global-mode))
 
 ;;
 ;;; UX.
 ;;
-
-;;; Hooks.
-
-(defvar e-init-ui-hook nil)
-(defvar e-load-theme-hook nil)
-(defvar e-switch-buffer-hook nil)
-(defvar e-switch-window-hook nil)
-(defvar e-switch-frame-hook nil)
-
-(defvar e-inhibit-switch-buffer-hooks nil)
-(defvar e-inhibit-switch-window-hooks nil)
-(defvar e-inhibit-switch-frame-hooks nil)
-
-;;;
 
 ;; Just quit.
 (setq confirm-kill-emacs 'yes-or-no-p)
@@ -592,15 +493,6 @@
 (setq uniquify-buffer-name-style 'forward
       ring-bell-function #'ignore
       visible-bell nil)
-
-;;; Scrolling.
-
-(setq hscroll-margin 2
-      hscroll-step 1
-      scroll-conservatively 101
-      scroll-margin 0
-      scroll-preserve-screen-position t
-      auto-window-vscroll nil)
 
 ;;; Cursor.
 
@@ -638,7 +530,6 @@
 (setq window-divider-default-places t
       window-divider-default-bottom-width 1
       window-divider-default-right-width 1)
-(add-hook 'e-init-ui-hook #'window-divider-mode)
 
 ;; Avoid GUI.
 (setq use-dialog-box nil)
@@ -646,7 +537,6 @@
 ;; because native tooltips are ugly.
 (when (bound-and-true-p tooltip-mode)
   (tooltip-mode -1))
-(setq x-gtk-use-system-tooltips nil)
 
 ;; Favor vertical splits over horizontal ones.
 (setq split-width-threshold 160
@@ -680,24 +570,32 @@
 ;; Show absolute line numbers for narrowed regions.
 (setq-default display-line-numbers-widen t)
 
+;; FIXME A wierd st bug that leaves "artifacts" of line numbers once you
+;; pop a new line before some text. Meanwhile I'll disable linum becuase it
+;; creeps me out.
+
 ;; Enable line numbers in most text-editing modes.
-(add-hook 'prog-mode-hook #'display-line-numbers-mode)
-(add-hook 'text-mode-hook #'display-line-numbers-mode)
-(add-hook 'conf-mode-hook #'display-line-numbers-mode)
+;(add-hook 'prog-mode-hook #'display-line-numbers-mode)
+;(add-hook 'text-mode-hook #'display-line-numbers-mode)
+;(add-hook 'conf-mode-hook #'display-line-numbers-mode)
 
 ;;; Built-in packages.
 
 (use-package ansi-color
   :init (setq ansi-color-for-comint-mode t))
 
+;; TODO Move to `use-package' somehow.
+(with-eval-after-load 'comint
+  (setq comint-prompt-read-only t))
+
 (use-package compile
   :config
   (setq compilation-always-kill t
         compilation-ask-about-save nil
         compilation-scroll-output 'first-error)
-  ;; Handle ansi codes in compilation buffer.
+  ;; Handle ANSI codes in compilation buffer.
   (add-hook 'compilation-filter-hook
-    (lambda ()
+    (lambda (&rest _)
       (with-silent-modifications
         (ansi-color-apply-on-region compilation-filter-start (point))))))
 
@@ -710,15 +608,15 @@
   (defvar e-ediff-saved-wconf nil)
   ;; Restore window config after quitting ediff.
   (add-hook 'ediff-before-setup-hook
-    (lambda ()
+    (lambda (&rest _)
       (setq e-ediff-saved-wconf (current-window-configuration))))
   (add-hook 'ediff-quit-hook :append
-    (lambda ()
+    (lambda (&rest _)
       (when (window-configuration-p e-ediff-saved-wconf)
         (set-window-configuration e-ediff-saved-wconf)))))
 
 (use-package hl-line
-  :disabled
+  :disabled ; FIXME Temporary disabled.
   :hook ((prog-mode text-mode conf-mode special-mode) . hl-line-mode)
   :config
   ;; Not having to render the hl-line overlay in multiple buffers offers a tiny
@@ -729,21 +627,20 @@
   ;; Temporarily disable `hl-line' when selection is active.
   (defvar e-hl-line-mode nil)
   (add-hook 'evil-visual-state-entry-hook
-    (lambda ()
+    (lambda (&rest _)
       (when hl-line-mode
         (setq-local e-hl-line-mode t)
         (hl-line-mode -1))))
   (add-hook 'evil-visual-state-exit-hook
-    (lambda ()
+    (lambda (&rest _)
       (when e-hl-line-mode
         (hl-line-mode +1)))))
 
 (use-package winner
-  :preface (defvar winner-dont-bind-my-keys t)
-  :hook (e-first-buffer . winner-mode))
+  :hook (emacs-startup . winner-mode))
 
 (use-package paren
-  :hook (e-first-buffer . show-paren-mode)
+  :hook (emacs-startup . show-paren-mode)
   :config
   (setq show-paren-delay 0.1
         show-paren-highlight-openparen t
@@ -761,16 +658,16 @@
           (newline-mark ?\n [?¬ ?\n])
           (space-mark ?\  [?·] [?.])))
 
-  (defun e-disable-whitespace-mode-in-childframes-a (orig-fn)
-    (unless (frame-parameter nil 'parent-frame)
-      (funcall orig-fn)))
-  (add-function :around whitespace-enable-predicate #'e-disable-whitespace-mode-in-childframes-a))
+  (add-function :around whitespace-enable-predicate
+    (lambda (orig-fn &rest _)
+      (unless (frame-parameter nil 'parent-frame)
+        (funcall orig-fn)))))
 
 ;;; External packages.
 
 (use-package hide-mode-line
-  :hook (Man-mode-hook . hide-mode-line-mode)
-  :hook (completion-list-mode-hook . hide-mode-line-mode))
+  :hook (Man-mode . hide-mode-line-mode)
+  :hook (completion-list-mode . hide-mode-line-mode))
 
 (use-package highlight-numbers
   :hook ((prog-mode conf-mode) . highlight-numbers-mode)
@@ -812,10 +709,25 @@
   :init
   ;; Convenience aliases.
   (defalias 'define-key! #'general-def)
-  (defalias 'undefine-key! #'general-unbind))
+  (defalias 'undefine-key! #'general-unbind)
+  :config
+  (defmacro define-leader-key! (&rest args)
+    `(general-define-key
+      :states nil
+      :wk-full-keys nil
+      :keymaps 'e-leader-map
+      ,@args))
+
+  (defmacro define-localleader-key! (&rest args)
+    `(general-define-key
+      :states '(normal visual motion emacs insert)
+      :major-modes t
+      :prefix e-localleader-key
+      :non-normal-prefix e-localleader-alt-key
+      ,@args)))
 
 (use-package which-key
-  :hook (e-first-input . which-key-mode)
+  :hook (emacs-startup . which-key-mode)
   :init
   (setq which-key-sort-order #'which-key-prefix-then-key-order
         which-key-sort-uppercase-first nil
@@ -824,26 +736,8 @@
         which-key-min-display-lines 6
         which-key-side-window-slot -10)
   :config
-  (set-face-attribute 'which-key-local-map-description-face nil :weight 'bold)
-  (which-key-setup-side-window-bottom)
-
   (which-key-add-key-based-replacements e-leader-key "<leader>")
   (which-key-add-key-based-replacements e-localleader-key "<localleader>"))
-
-(defmacro define-leader-key! (&rest args)
-  `(general-define-key
-    :states nil
-    :wk-full-keys nil
-    :keymaps 'e-leader-map
-    ,@args))
-
-(defmacro define-localleader-key! (&rest args)
-  `(general-define-key
-    :states '(normal visual motion emacs insert)
-    :major-modes t
-    :prefix e-localleader-key
-    :non-normal-prefix e-localleader-alt-key
-    ,@args))
 
 ;;
 ;;; Projectile.
@@ -899,7 +793,7 @@
   ;; when exiting Emacs to prevent slowdowns/freezing when cache files are
   ;; loaded or written to.
   (add-hook 'kill-emacs-hook
-    (lambda ()
+    (lambda (&rest _)
       (when (and (bound-and-true-p projectile-projects-cache)
                  projectile-enable-caching)
         (projectile-cleanup-known-projects)
@@ -916,16 +810,26 @@
                  and do (remhash proot projectile-project-type-cache))
         (projectile-serialize-cache))))
 
+  ;; Disable bottom-up root searching to prevent issues with root resolution on
+  ;; HOME directory.
+  (let ((default-directory "~"))
+    (when (cl-find-if #'projectile-file-exists-p
+                      projectile-project-root-files-bottom-up)
+      (setq projectile-project-root-files
+            (append projectile-project-root-files-bottom-up
+                    projectile-project-root-files)
+            projectile-project-root-files-bottom-up nil)))
+
   ;; Only use `fd' or `ripgrep'.
   (advice-add #'projectile-get-ext-command :override
-    (lambda (vcs)
+    (lambda (vcs &rest _)
       (if (functionp projectile-generic-command)
           (funcall projectile-generic-command vcs)
         projectile-generic-command)))
   (setq projectile-git-submodule-command nil
         projectile-indexing-method 'hybrid
         projectile-generic-command
-        (lambda ()
+        (lambda (&rest _)
           (let ((find-exe-fn #'executable-find))
             (cond
              ((when-let
@@ -933,8 +837,7 @@
                            (cl-find-if find-exe-fn (list "fdfind" "fd"))
                          e-projectile-fd-binary))
                 (concat (format "%s . -0 -H -E .git --color=never --type file --type symlink --follow"
-                                bin)
-                        (if IS-WINDOWS " --path-separator=/"))))
+                                bin))))
              ((funcall find-exe-fn "rg")
               (concat "rg -0 --files --follow --color=never --hidden"
                       (cl-loop for dir in projectile-globally-ignored-directories
@@ -943,6 +846,7 @@
                       (if IS-WINDOWS " --path-separator /")))
              ("find . -type f -print0")))))
 
+  ;; Ignore "unknown project" errors.
   (advice-add #'projectile-default-generic-command :around
     (lambda (orig-fn &rest args))
       (ignore-errors (apply orig-fn args))))
@@ -952,20 +856,29 @@
 ;;
 
 (use-package evil
+  :hook (emacs-startup . evil-mode)
   :demand t
   :preface
-  (setq evil-want-visual-char-semi-exclusive t
+  (setq evil-ex-interactive-search-highlight 'selected-window
         evil-ex-search-vim-style-regexp t
         evil-ex-visual-char-range t
+        evil-kbd-macro-suppress-motion-error t
         evil-mode-line-format 'nil
         evil-symbol-word-search t
-        evil-default-cursor 'box
+        evil-want-C-g-bindings t
+        evil-want-C-i-jump (or (daemonp) (display-graphic-p))
+        evil-want-C-u-delete t
+        evil-want-C-u-scroll t
+        evil-want-C-w-delete t
+        evil-want-C-w-scroll t
+        evil-want-Y-yank-to-eol t
+        evil-want-abbrev-expand-on-insert-exit nil
+        evil-want-visual-char-semi-exclusive t
+        evil-visual-state-cursor 'box
+        evil-default-cursor      'box
         evil-normal-state-cursor 'box
         evil-emacs-state-cursor  'box
-        evil-insert-state-cursor 'bar
-        evil-visual-state-cursor 'hollow
-        evil-ex-interactive-search-highlight 'selected-window
-        evil-kbd-macro-suppress-motion-error t)
+        evil-insert-state-cursor 'box)
   ;; For `evil-collection`.
   (setq evil-want-integration t
         evil-want-keybinding nil)
@@ -979,34 +892,59 @@
   (advice-add #'evil-visual-update-x-selection :override #'ignore)
 
   ;; Start help-with-tutorial in Emacs state.
-  (advice-add #'help-with-tutorial :after (lambda (&rest _) (evil-emacs-state +1)))
+  (advice-add #'help-with-tutorial :after
+    (lambda (&rest _)
+      (evil-emacs-state +1)))
 
   ;; Shorter messages.
   (unless noninteractive
     (setq save-silently t)
     (add-hook 'after-save-hook
-      (lambda ()
+      (lambda (&rest _)
         (message "\"%s\" %dL, %dC written"
                  (if buffer-file-name
                      (file-relative-name (file-truename buffer-file-name) (e-project-root))
                    (buffer-name))
                  (count-lines (point-min) (point-max))
-                 (buffer-size)))))
-
-  (evil-mode +1))
+                 (buffer-size))))))
 
 (use-package evil-collection
   :after evil
   :init (setq evil-collection-company-use-tng t)
   :config (evil-collection-init))
 
-(use-package evil-args)
+(use-package evil-args
+  :after evil)
 
-(use-package evil-easymotion)
+(use-package evil-easymotion
+  :after evil
+  :commands (evilem-create evilem-default-keybindings)
+  :config
+  ;; Use `evil-search' backend, instead of `isearch'.
+  (evilem-make-motion evilem-motion-search-next #'evil-ex-search-next
+                      :bind ((evil-ex-search-highlight-all nil)))
+  (evilem-make-motion evilem-motion-search-previous #'evil-ex-search-previous
+                      :bind ((evil-ex-search-highlight-all nil)))
+  (evilem-make-motion evilem-motion-search-word-forward #'evil-ex-search-word-forward
+                      :bind ((evil-ex-search-highlight-all nil)))
+  (evilem-make-motion evilem-motion-search-word-backward #'evil-ex-search-word-backward
+                      :bind ((evil-ex-search-highlight-all nil))))
 
-(use-package evil-embrace)
+(use-package evil-embrace
+  :after evil
+  :commands (embrace-add-pair embrace-add-pair-regexp)
+  :hook (LaTeX-mode . embrace-LaTeX-mode-hook)
+  :hook (org-mode . embrace-org-mode-hook)
+  :hook (emacs-lisp-mode . embrace-emacs-lisp-mode-hook)
+  :init
+  (with-eval-after-load 'evil-surround
+    (evil-embrace-enable-evil-surround-integration))
+  :config
+  (setq evil-embrace-show-help-p nil))
 
 (use-package evil-escape
+  :after evil
+  :straight (:host github :repo "hlissner/evil-escape")
   :commands evil-escape
   :init
   (setq evil-escape-excluded-states '(normal visual multiedit emacs motion)
@@ -1017,31 +955,42 @@
   :config
   ;; No `evil-escape' in minibuffer.
   (add-hook 'evil-escape-inhibit-functions
-    (lambda ()
+    (lambda (&rest _)
       (and (minibufferp)
            (or (not (bound-and-true-p evil-collection-setup-minibuffer))
                (evil-normal-state-p)))))
+  ;; In case `evil-mc' needs `evil-escape'.
   (evil-escape-mode +1))
 
 (use-package evil-exchange
+  :after evil
   :commands evil-exchange
   :config
   (add-hook 'e-escape-hook
-    (lambda ()
+    (lambda (&rest _)
       (when evil-exchange--overlays
         (evil-exchange-cancel)
         t))))
 
-(use-package evil-indent-plus)
+(use-package evil-quick-diff
+  :after evil
+  :straight (:host github :repo "rgrinberg/evil-quick-diff")
+  :commands (evil-quick-diff evil-quick-diff-cancel))
 
-(use-package evil-lion)
+(use-package evil-indent-plus
+  :after evil)
+
+(use-package evil-lion
+  :after evil)
 
 (use-package evil-nerd-commenter
+  :after evil
   :commands (evilnc-comment-operator
              evilnc-inner-comment
              evilnc-outer-commenter))
 
 (use-package evil-snipe
+  :after evil
   :commands (evil-snipe-mode
              evil-snipe-override-mode
              evil-snipe-local-mode
@@ -1052,10 +1001,15 @@
         evil-snipe-repeat-scope 'visible
         evil-snipe-char-fold t)
   :config
+  (push 'Info-mode evil-snipe-disabled-modes)
+  (push 'calc-mode evil-snipe-disabled-modes)
+  (push 'treemacs-mode evil-snipe-disabled-modes)
+
   (evil-snipe-mode +1)
   (evil-snipe-override-mode +1))
 
 (use-package evil-surround
+  :after evil
   :commands (global-evil-surround-mode
              evil-surround-edit
              evil-Surround-edit
@@ -1063,7 +1017,7 @@
   :config (global-evil-surround-mode 1))
 
 (use-package evil-traces
-  :after evil-ex
+  :after (evil evil-ex)
   :config
   (evil-traces-mode))
 
@@ -1077,54 +1031,228 @@
     "#" #'evil-visualstar/begin-search-backward))
 
 ;;
-;;; IRC.
+;;; Ivy.
 ;;
 
-(use-package erc
-  :disabled)
-
-(use-package circe
-  :commands circe circe-server-buffers
+(use-package counsel
+  :defer t
+  :init
+  (define-key!
+    [remap apropos]                  #'counsel-apropos
+    [remap bookmark-jump]            #'counsel-bookmark
+    [remap describe-bindings]        #'counsel-descbinds
+    [remap describe-face]            #'counsel-faces
+    [remap describe-function]        #'counsel-describe-function
+    [remap describe-variable]        #'counsel-describe-variable
+    [remap evil-ex-registers]        #'counsel-evil-registers
+    [remap evil-show-marks]          #'counsel-mark-ring
+    [remap execute-extended-command] #'counsel-M-x
+    [remap find-file]                #'counsel-find-file
+    [remap find-library]             #'counsel-find-library
+    [remap imenu]                    #'counsel-imenu
+    [remap info-lookup-symbol]       #'counsel-info-lookup-symbol
+    [remap load-theme]               #'counsel-load-theme
+    [remap locate]                   #'counsel-locate
+    [remap org-goto]                 #'counsel-org-goto
+    [remap org-set-tags-command]     #'counsel-org-tag
+    [remap recentf-open-files]       #'counsel-recentf
+    [remap set-variable]             #'counsel-set-variable
+    [remap swiper]                   #'counsel-grep-or-swiper
+    [remap unicode-chars-list-chars] #'counsel-unicode-char
+    [remap yank-pop]                 #'counsel-yank-pop)
   :config
-  (setq circe-default-quit-message nil
-        circe-default-part-message nil
-        circe-use-cycle-completion t
-        circe-reduce-lurker-spam t)
+  ;; Don't use ^ as initial input. Set this here because `counsel' defines more
+  ;; of its own, on top of the defaults.
+  (setq ivy-initial-inputs-alist nil)
 
-  (add-hook 'circe-mode-hook #'turn-off-smartparens-mode))
+  ;; Integrate with `helpful'.
+  (setq counsel-describe-function-function #'helpful-callable
+        counsel-describe-variable-function #'helpful-variable)
 
-;;
-;;; Pass.
-;;
+  (add-hook 'counsel-grep-post-action-hook #'better-jumper-set-jump)
+  (add-hook 'counsel-grep-post-action-hook #'recenter)
 
-(use-package pass
-  :config (auth-source-pass-enable))
+  ;; Make `counsel-compile' projectile-aware.
+  (add-to-list 'counsel-compile-root-functions #'projectile-project-root)
+  (with-eval-after-load 'savehist
+    (add-to-list 'savehist-additional-variables 'counsel-compile-history))
 
-(use-package password-store
-  :init (setq password-store-password-length 12)
+  ;; Sort it by appearance in page.
+  (add-to-list 'ivy-sort-functions-alist '(counsel-imenu))
+
+  ;; `counsel-find-file'.
+  (dolist (fn '(counsel-rg counsel-find-file))
+    (ivy-add-actions
+     fn '(("p" (lambda (path) (with-ivy-window (insert (file-relative-name path default-directory))))
+           "insert relative path")
+          ("P" (lambda (path) (with-ivy-window (insert path)))
+           "insert absolute path")
+          ("l" (lambda (path) (with-ivy-window (insert (format "[[./%s]]" (file-relative-name path default-directory)))))
+           "insert relative org-link")
+          ("L" (lambda (path) (with-ivy-window (insert (format "[[%s]]" path))))
+           "Insert absolute org-link"))))
+
+  (ivy-add-actions 'counsel-file-jump (plist-get ivy--actions-list 'counsel-find-file))
+
+  (advice-add #'counsel--find-return-list :override
+    (lambda (args &rest _)
+      (cl-destructuring-bind (find-program . args)
+          (cond ((when-let (fd (executable-find (or e-projectile-fd-binary "fd")))
+                  (append (list fd
+                                "--color=never" "-E" ".git"
+                                "--type" "file" "--type" "symlink" "--follow")
+                          (if IS-WINDOWS '("--path-separator=/")))))
+                ((executable-find "rg")
+                (append (list "rg" "--files" "--follow" "--color=never" "--hidden" "--no-messages")
+                        (cl-loop for dir in projectile-globally-ignored-directories
+                                  collect "--glob"
+                                  collect (concat "!" dir))))
+                ((cons find-program args)))
+        (counsel--call
+        (cons find-program args)
+        (lambda (&rest _)
+          (goto-char (point-min))
+          (let (files)
+            (while (< (point) (point-max))
+              (push (buffer-substring (line-beginning-position) (line-end-position))
+                    files)
+              (forward-line 1))
+            (nreverse files))))))))
+
+(use-package counsel-projectile
+  :defer t
+  :init
+  (define-key!
+    [remap projectile-find-dir]         #'counsel-projectile-find-dir
+    [remap projectile-switch-to-buffer] #'counsel-projectile-switch-to-buffer
+    [remap projectile-grep]             #'counsel-projectile-grep
+    [remap projectile-ag]               #'counsel-projectile-ag
+    [remap projectile-switch-project]   #'counsel-projectile-switch-project)
   :config
-  (advice-add #'auth-source-pass--read-entry :override
-    (lambda ()
-      (with-temp-buffer
-        (insert-file-contents
-        (expand-file-name (format "%s.gpg" entry) (password-store-dir)))
-        (buffer-substring-no-properties (point-min) (point-max))))))
+  ;; No highlighting of visited files.
+  (ivy-set-display-transformer #'counsel-projectile-find-file nil)
+
+  (setq counsel-projectile-sort-files t))
+
+(use-package ivy
+  :hook (emacs-startup . ivy-mode)
+  :init
+  (let ((standard-search-fn #'e-ivy-prescient-non-fuzzy)
+        (alt-search-fn      #'ivy--regex-fuzzy))
+    (setq ivy-re-builders-alist
+          `((counsel-rg     . ,standard-search-fn)
+            (swiper         . ,standard-search-fn)
+            (swiper-isearch . ,standard-search-fn)
+            (t . ,alt-search-fn))
+          ivy-more-chars-alist
+          '((counsel-rg . 1)
+            (counsel-search . 2)
+            (t . 3))))
+  :config
+  ;; Relaxed search.
+  (setq ivy-sort-max-size 7500)
+
+  ;; Load `counsel' early.
+  (require 'counsel nil t)
+
+  (setq ivy-height 17
+        ivy-wrap t
+        ivy-fixed-height-minibuffer t
+        projectile-completion-system 'ivy
+        ivy-magic-slash-non-match-action nil
+        ivy-use-virtual-buffers nil
+        ivy-virtual-abbreviate 'full
+        ivy-on-del-error-function #'ignore
+        ivy-use-selectable-prompt t)
+
+  ;; Disable in `evil-ex'.
+  (advice-add #'evil-ex :around
+    (lambda (orig-fn &rest args)
+      (let ((completion-in-region-function #'completion--in-region))
+        (apply orig-fn args))))
+
+  (define-key! ivy-minibuffer-map
+    "C-o" #'ivy-dispatching-done
+    "M-o" #'hydra-ivy/body))
+
+(use-package ivy-rich
+  :after ivy
+  :config
+  (setq ivy-rich-parse-remote-buffer nil)
+
+  (ivy-rich-mode +1))
+
+(use-package ivy-hydra)
+
+(use-package ivy-prescient
+  :hook (ivy-mode . ivy-prescient-mode)
+  :hook (ivy-prescient-mode . prescient-persist-mode)
+  :init
+  (setq prescient-filter-method '(literal regexp initialism fuzzy))
+  :config
+  (setq ivy-prescient-sort-commands
+        '(:not counsel-ag
+               counsel-buffer-or-recentf
+               counsel-git-grep
+               counsel-grep
+               counsel-imenu
+               counsel-recentf
+               counsel-rg
+               counsel-yank-pop
+               ivy-switch-buffer
+               swiper
+               swiper-isearch)
+        ivy-prescient-retain-classic-highlighting t)
+
+  (defun e-ivy-prescient-non-fuzzy (str)
+    (let ((prescient-filter-method '(literal regexp)))
+      (ivy-prescient-re-builder str)))
+
+  ;; NOTE prescient config duplicated with `company'.
+  (setq prescient-save-file (concat e-cache-dir "prescient-save.el")))
+
+(use-package flx
+  :defer t
+  :init (setq ivy-flx-limit 10000))
+
+(use-package wgrep
+  :commands wgrep-change-to-wgrep-mode
+  :config (setq wgrep-auto-save-buffer t))
+
+(use-package swiper
+  :init (setq swiper-action-recenter t))
+
+(use-package amx
+  :init (setq amx-save-file (concat e-cache-dir "amx-items")))
 
 ;;
-;;; Finalize.
+;;; Company.
 ;;
 
-(add-hook 'hack-local-variables-hook #'e-run-local-var-hooks-h)
-(add-hook 'after-change-major-mode-hook #'e-run-local-var-hooks-maybe-h)
+(use-package company
+  :hook (emacs-startup . global-company-mode)
+  :commands (company-complete-common company-manual-begin company-grab-line)
+  :init
+  (setq company-idle-delay 0.25
+        company-minimum-prefix-length 2
+        company-tooltip-limit 14
+        company-tooltip-align-annotations t
+        company-require-match 'never
+        company-global-modes '(not erc-mode message-mode help-mode gud-mode)
+        company-frontends '(company-pseudo-tooltip-frontend company-echo-metadata-frontend)
+        company-backends '(company-capf)
+        company-dabbrev-other-buffers nil
+        company-dabbrev-ignore-case nil
+        company-dabbrev-downcase nil)
 
-(defvar e-first-input-hook nil)
-(add-hook 'e-first-input-hook #'gcmh-mode)
-(add-hook 'e-first-input-hook #'pre-command-hook)
+  :config
+  (add-hook 'company-mode-hook #'evil-normalize-keymaps)
 
-(defvar e-first-file-hook nil)
-(add-hook 'e-first-file-hook #'after-find-file)
-(add-hook 'e-first-file-hook #'dired-initial-position-hook)
+  (add-hook 'evil-normal-state-entry-hook
+    (lambda (&rest _)
+      (when company-candidates
+        (company-abort))))
 
-(defvar e-first-buffer-hook nil)
-(add-hook 'e-first-buffer-hook #'after-find-file)
-(add-hook 'e-first-buffer-hook #'e-switch-buffer-hook)
+  (advice-add #'company-begin-backend :before
+    (lambda (&rest _)
+      (company-abort))))
