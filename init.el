@@ -1300,3 +1300,68 @@
 
 (use-package flx-ido
   :hook (ido-mode . flx-ido-mode))
+
+;;
+;;; Flyspell.
+;;
+
+(use-package ispell
+  :config
+  (pcase (cond ((executable-find "aspell")   'aspell)
+               ((executable-find "hunspell") 'hunspell))
+    (`aspell
+     (setq ispell-program-name "aspell"
+           ispell-extra-args '("--sug-mode=ultra" "--run-together" "--dont-tex-check-comments"))
+
+     (add-hook 'text-mode-hook
+       (lambda (&rest _)
+         (setq-local ispell-extra-args (remove "--run-together" ispell-extra-args))))
+
+     (defun e-spell-init-ispell-extra-args-a (orig-fun &rest args)
+       :around '(ispell-word flyspell-auto-correct-word)
+       (let ((ispell-extra-args (remove "--run-together" ispell-extra-args)))
+         (ispell-kill-ispell t)
+         (apply orig-fun args)
+         (ispell-kill-ispell t))))
+
+    (`hunspell
+     (setq ispell-program-name "hunspell"))))
+
+(use-package flyspell
+  :defer t
+  :preface
+  :init
+  (add-hook #'flyspell-mode '(org-mode-hook
+                              markdown-mode-hook
+                              TeX-mode-hook
+                              rst-mode-hook
+                              mu4e-compose-mode-hook
+                              message-mode-hook
+                              git-commit-mode-hook))
+  (add-hook #'flyspell-prog-mode '(yaml-mode-hook
+                                   conf-mode-hook
+                                   prog-mode-hook))
+  :config
+  (setq flyspell-issue-welcome-flag nil
+        flyspell-issue-message-flag nil)
+
+  ;; Don't mark duplicates.
+  (add-hook 'flyspell-mode-hook
+    (lambda (&rest _)
+      (and (or (and (bound-and-true-p flycheck-mode)
+                    (executable-find "proselint"))
+               (featurep 'langtool))
+           (setq-local flyspell-mark-duplications-flag nil)))))
+
+(use-package flyspell-correct
+  :commands flyspell-correct-previous
+  :general ([remap ispell-word] #'flyspell-correct-at-point)
+  :config
+  (require 'flyspell-correct-ivy nil t))
+
+(use-package flyspell-lazy
+  :after flyspell
+  :config
+  (setq flyspell-lazy-idle-seconds 1
+        flyspell-lazy-window-idle-seconds 3)
+  (flyspell-lazy-mode +1))
