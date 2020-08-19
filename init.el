@@ -1359,6 +1359,9 @@
   :config
   (require 'flyspell-correct-ivy nil t))
 
+(use-package flyspell-correct-ivy
+  :after flyspell-correct)
+
 (use-package flyspell-lazy
   :after flyspell
   :config
