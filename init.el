@@ -1245,3 +1245,58 @@
   (advice-add #'company-begin-backend :before
     (lambda (&rest _)
       (company-abort))))
+
+;;
+;;; Ido.
+;;
+
+(use-package ido
+  :hook (emacs-startup . ido-mode)
+  :hook (ido-mode . ido-everywhere)
+  :hook (ido-mode . ido-ubiquitous-mode)
+  :preface
+  ;; Define hook manually.
+  (advice-add #'ido-mode :after
+    (lambda (&rest _)
+      (run-hooks 'ido-mode-hook)))
+  :init
+  (setq ido-save-directory-list-file (concat e-cache-dir "ido.last"))
+  :config
+  (push "\\`.DS_Store$" ido-ignore-files)
+  (push "Icon\\?$" ido-ignore-files)
+  (setq ido-ignore-buffers '(" output\\*$"
+                             "\\` "
+                             "^TAGS$"
+                             "^\*Ido"
+                             "^\\*.*Completions\\*$"
+                             "^\\*Buffer"
+                             "^\\*ESS\\*"
+                             "^\\*Ediff"
+                             "^\\*Messages\\*"
+                             "^\\*[Hh]elp"
+                             "^\\*cvs-"
+                             "^\\*tramp"
+                             "_region_")
+        ido-auto-merge-work-directories-length -1
+        ido-confirm-unique-completion t
+        ido-case-fold t
+        ido-create-new-buffer 'always
+        ido-enable-flex-matching t))
+
+
+(use-package ido-completing-read-plus+
+  :straight (:host github :repo "DarwinAwardWinner/ido-completing-read-plus")
+  :hook (ido-mode . ido-ubiquitous-mode))
+
+(use-package ido-vertical-mode
+  :hook (ido-mode . ido-vertical-mode)
+  :config (setq ido-vertical-show-count t))
+
+(use-package ido-sort-mtime
+  :hook (ido-mode . ido-sort-mtime-mode))
+
+(use-package crm-custom
+  :hook (ido-mode . crm-custom-mode))
+
+(use-package flx-ido
+  :hook (ido-mode . flx-ido-mode))
