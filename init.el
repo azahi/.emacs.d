@@ -913,11 +913,9 @@
   :init (setq evil-collection-company-use-tng t)
   :config (evil-collection-init))
 
-(use-package evil-args
-  :after evil)
+(use-package evil-args)
 
 (use-package evil-easymotion
-  :after evil
   :commands (evilem-create evilem-default-keybindings)
   :config
   ;; Use `evil-search' backend, instead of `isearch'.
@@ -931,7 +929,6 @@
                       :bind ((evil-ex-search-highlight-all nil))))
 
 (use-package evil-embrace
-  :after evil
   :commands (embrace-add-pair embrace-add-pair-regexp)
   :hook (LaTeX-mode . embrace-LaTeX-mode-hook)
   :hook (org-mode . embrace-org-mode-hook)
@@ -943,7 +940,6 @@
   (setq evil-embrace-show-help-p nil))
 
 (use-package evil-escape
-  :after evil
   :straight (:host github :repo "hlissner/evil-escape")
   :commands evil-escape
   :init
@@ -963,7 +959,6 @@
   (evil-escape-mode +1))
 
 (use-package evil-exchange
-  :after evil
   :commands evil-exchange
   :config
   (add-hook 'e-escape-hook
@@ -973,24 +968,19 @@
         t))))
 
 (use-package evil-quick-diff
-  :after evil
   :straight (:host github :repo "rgrinberg/evil-quick-diff")
   :commands (evil-quick-diff evil-quick-diff-cancel))
 
-(use-package evil-indent-plus
-  :after evil)
+(use-package evil-indent-plus)
 
-(use-package evil-lion
-  :after evil)
+(use-package evil-lion)
 
 (use-package evil-nerd-commenter
-  :after evil
   :commands (evilnc-comment-operator
              evilnc-inner-comment
              evilnc-outer-commenter))
 
 (use-package evil-snipe
-  :after evil
   :commands (evil-snipe-mode
              evil-snipe-override-mode
              evil-snipe-local-mode
@@ -1009,7 +999,6 @@
   (evil-snipe-override-mode +1))
 
 (use-package evil-surround
-  :after evil
   :commands (global-evil-surround-mode
              evil-surround-edit
              evil-Surround-edit
@@ -1017,7 +1006,7 @@
   :config (global-evil-surround-mode 1))
 
 (use-package evil-traces
-  :after (evil evil-ex)
+  :after evil-ex
   :config
   (evil-traces-mode))
 
