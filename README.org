@@ -1,0 +1,30 @@
+* .emacs.d
+Personal Emacs configuration. It's bad and probably not useful for anyone
+apart from me.
+
+** Note
+If you are planning to use Emacs, just don't bother. Use
+[[https://github.com/neovim/neovim][NeoVim]] instead. If you just want an
+extensible editor and *editor* only, don't touch Emacs. You can check out my
+[[https://github.com/azahi/dotfiles][dotfiles]] for a relatively sufficient
+Vim configuration that will probably suit your needs if you write small-scale
+C/C++ and maybe a bit of this and that, it even has a rudimentary `org-mode'
+support.
+
+Consider Emacs only if:
+- You *love* Lisp.
+- You want to use the infamous `org-mode', `elfeed', `mu4e' and some other
+  /killer feature/ that only Emacs has.
+- You are not afraid of reading walls of documentation.
+- You have a lot of free time.
+- You can /tolerate/ a piece of bloated mess that Emacs is by design.
+
+** Credits
+[[http://ergoemacs.org/][Xah Emacs Site]]
+[[http://ivanmalison.github.io/dotfiles/][Ivan Malison's dotfiles]]
+[[http://www.wilfred.me.uk/.emacs.d/init.html][Wilfred's .emacs.d]]
+[[https://git.sr.ht/~technomancy/better-defaults][better-defaults]]
+[[https://github.com/bbatsov/prelude][prelude]]
+[[https://github.com/bling/dotemacs][bling's dotemacs]]
+[[https://github.com/hlissner/doom-emacs][doom-emacs]]
+[[https://github.com/xahlee/xah_emacs_init][xah_emacs_init]]
