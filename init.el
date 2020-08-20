@@ -1,5 +1,8 @@
 ;;; init.el -*- lexical-binding: t; -*-
 
+;; TODO Split this disgusting mess into different files.
+;; TODO Pull hooks from `emacs-startup-hook', make it as "lazy" as possible.
+
 ;; Prevent garbage collection from running before invoking `ghcm-mode'.
 (setq gc-cons-threshold most-positive-fixnum)
 
@@ -11,6 +14,15 @@
 (require 'subr-x)
 
 ;;
+;;; Library.
+;;
+
+(defun e-enlist (exp)
+  "Return EXP wrapped in a list, or as-is if already a list."
+  (declare (pure t) (side-effect-free t))
+  (if (listp exp) exp (list exp)))
+
+;;
 ;;; Variables.
 ;;
 
@@ -18,6 +30,7 @@
 (let (file-name-handler-alist)
   (setq user-emacs-directory (file-name-directory load-file-name)))
 
+;; Directories.
 (defconst e-emacs-dir
   (eval-when-compile (file-truename user-emacs-directory)))
 (defconst e-local-dir (concat e-emacs-dir ".local/"))
@@ -137,7 +150,7 @@
           ("melpa" . ,(concat proto "://melpa.org/packages/"))
           ("org"   . ,(concat proto "://orgmode.org/elpa/")))))
 
-;; Prevent `init.el' modification by `package.el'.
+;; Prevent `init.el' to be modified by `package.el'.
 (advice-add #'package--ensure-init-file :override #'ignore)
 
 ;;
@@ -276,23 +289,11 @@
 ;;; Built-in packages.
 
 (use-package autorevert
-  :hook (focus-in . e-auto-revert-buffers)
-  :hook (after-save . e-auto-revert-buffers)
   :config
   (setq auto-revert-verbose t
         auto-revert-use-notify nil
         auto-revert-stop-on-user-input nil
-        revert-without-query (list "."))
-
-  (defun e-auto-revert-buffer ()
-    (unless (or auto-revert-mode (active-minibuffer-window))
-      (let ((auto-revert-mode t))
-        (auto-revert-handler))))
-
-  (defun e-auto-revert-buffers ()
-    (dolist (buf (e-visible-buffers))
-      (with-current-buffer buf
-        (e-auto-revert-buffer)))))
+        revert-without-query (list ".")))
 
 (use-package recentf
   :hook (emacs-startup . recentf-mode)
@@ -570,14 +571,10 @@
 ;; Show absolute line numbers for narrowed regions.
 (setq-default display-line-numbers-widen t)
 
-;; FIXME A wierd st bug that leaves "artifacts" of line numbers once you
-;; pop a new line before some text. Meanwhile I'll disable linum becuase it
-;; creeps me out.
-
 ;; Enable line numbers in most text-editing modes.
-;(add-hook 'prog-mode-hook #'display-line-numbers-mode)
-;(add-hook 'text-mode-hook #'display-line-numbers-mode)
-;(add-hook 'conf-mode-hook #'display-line-numbers-mode)
+(add-hook 'prog-mode-hook #'display-line-numbers-mode)
+(add-hook 'text-mode-hook #'display-line-numbers-mode)
+(add-hook 'conf-mode-hook #'display-line-numbers-mode)
 
 ;;; Built-in packages.
 
@@ -694,8 +691,8 @@
 (defvar e-escape-hook nil)
 (defun e-escape ()
   (interactive)
+        ;; Quit the minibuffer if open.
   (cond ((minibuffer-window-active-p (minibuffer-window))
-         ;; Quit the minibuffer if open.
          (abort-recursive-edit))
         ;; Run all escape hooks. If any returns non-nil, then stop there.
         ((run-hook-with-args-until-success 'e-escape-hook))
@@ -766,6 +763,12 @@
 
   :config
   (projectile-mode +1)
+
+  ;; Return project root
+  (defun e-project-root (&optional dir)
+    (let ((projectile-project-root (unless dir projectile-project-root))
+          projectile-require-project-root)
+      (projectile-project-root dir)))
 
   ;; Auto-discovery on `projectile-mode' is slow.
   (add-hook 'projectile-relevant-known-projects #'projectile-cleanup-known-projects)
@@ -894,19 +897,7 @@
   ;; Start help-with-tutorial in Emacs state.
   (advice-add #'help-with-tutorial :after
     (lambda (&rest _)
-      (evil-emacs-state +1)))
-
-  ;; Shorter messages.
-  (unless noninteractive
-    (setq save-silently t)
-    (add-hook 'after-save-hook
-      (lambda (&rest _)
-        (message "\"%s\" %dL, %dC written"
-                 (if buffer-file-name
-                     (file-relative-name (file-truename buffer-file-name) (e-project-root))
-                   (buffer-name))
-                 (count-lines (point-min) (point-max))
-                 (buffer-size))))))
+      (evil-emacs-state +1))))
 
 (use-package evil-collection
   :after evil
@@ -1244,7 +1235,21 @@
 
   (advice-add #'company-begin-backend :before
     (lambda (&rest _)
-      (company-abort))))
+      (company-abort)))
+
+  (defvar e-company-backend-alist
+    '((text-mode company-dabbrev company-yasnippet company-ispell)
+      (prog-mode company-capf company-yasnippet)
+      (conf-mode company-capf company-dabbrev-code company-yasnippet)))
+  (defun set-company-backend! (modes &rest backends)
+    (declare (indent defun))
+    (dolist (mode (e-enlist modes))
+      (if (null (car backends))
+          (setq e-company-backend-alist
+                (delq (assq mode e-company-backend-alist)
+                      e-company-backend-alist))
+        (setf (alist-get mode e-company-backend-alist)
+              backends)))))
 
 ;;
 ;;; Ido.
@@ -1255,7 +1260,7 @@
   :hook (ido-mode . ido-everywhere)
   :hook (ido-mode . ido-ubiquitous-mode)
   :preface
-  ;; Define hook manually.
+  ;; Define the hook manually.
   (advice-add #'ido-mode :after
     (lambda (&rest _)
       (run-hooks 'ido-mode-hook)))
@@ -1345,15 +1350,7 @@
                                    prog-mode-hook))
   :config
   (setq flyspell-issue-welcome-flag nil
-        flyspell-issue-message-flag nil)
-
-  ;; Don't mark duplicates.
-  (add-hook 'flyspell-mode-hook
-    (lambda (&rest _)
-      (and (or (and (bound-and-true-p flycheck-mode)
-                    (executable-find "proselint"))
-               (featurep 'langtool))
-           (setq-local flyspell-mark-duplications-flag nil)))))
+        flyspell-issue-message-flag nil))
 
 (use-package flyspell-correct
   :commands flyspell-correct-previous
@@ -1409,23 +1406,174 @@
         (ignore-errors (flycheck-buffer))
         nil))))
 
-(use-package flycheck-popup-tip
+(use-package! flycheck-popup-tip
   :commands (flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup)
-  :hook (flycheck-mode . e-flycheck-init-popups)
+  :hook (flycheck-mode . +syntax-init-popups-h)
   :config
-  (defun e-flycheck-init-popups (&rest _)
-    (unless (and (bound-and-true-p
-                  lsp-ui-mode
-                  lsp-ui-sideline-enable)
-      (flycheck-popup-tip-mode +1))))
-
   (with-eval-after-load 'evil
-    ;; Don't display popups while in insert or replace mode.
-    (add-hook #'flycheck-popup-tip-delete-popup '(evil-insert-state-entry-hook
-                                                  evil-replace-state-entry-hook))
+    ;; Don't display popups while in insert or replace mode, as it can affect
+    ;; the cursor's position or cause disruptive input delays.
+    (add-hook #'flycheck-popup-tip-delete-popup 'evil-insert-state-entry-hook)
+    (add-hook #'flycheck-popup-tip-delete-popup 'evil-replace-state-entry-hook)
     (advice-add #'flycheck-popup-tip-show-popup :before-while
       (lambda (&rest _)
         (if evil-local-mode
             (eq evil-state 'normal)
           (not (bound-and-true-p company-backend)))))))
 
+(use-package flycheck-popup-tip
+  :commands (flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup))
+
+;;
+;;; LSP.
+;;
+
+(use-package lsp-mode
+  :commands lsp-install-server
+  :hook (prog-mode . lsp)
+  :init
+  (setq lsp-session-file (concat e-etc-dir "lsp-session"))
+
+  ;; For `lsp-clients'.
+  (setq lsp-server-install-dir (concat e-etc-dir "lsp/"))
+
+  ;; Disable text modificatoin.
+  (setq lsp-enable-indentation nil
+        lsp-enable-on-type-formatting nil)
+
+  ;; Disable features that have great potential to be slow.
+  (setq lsp-enable-file-watchers nil
+        lsp-enable-folding nil
+        lsp-enable-text-document-color nil)
+
+  ;; Don't auto-kill LSP server when all buffers are closed.
+  (setq lsp-keep-workspace-alive nil)
+
+  :config
+  (when lsp-auto-configure
+    (mapc
+      (lambda (package)
+        (require package nil t))
+      (cl-remove-if #'featurep lsp-client-packages)))
+
+  (add-hook 'lsp-completion-mode-hook
+    (lambda (&rest _)
+      (when lsp-completion-mode
+        (set (make-local-variable 'company-backends)
+             (cons 'company-capf
+                   (remove 'company-capf
+                           (remq 'company-capf company-backends)))))))
+
+  ;; Defer LSP server shutdown.
+  (defvar e-lsp-defer-shutdown 5)
+  (defvar e-lsp-deferred-shutdown-timer nil)
+  (advice-add #'lsp--shutdown-workspace :around
+    (lambda (orig-fn &optional restart)
+      (if (or lsp-keep-workspace-alive
+              restart
+              (null e-lsp-defer-shutdown)
+              (= e-lsp-defer-shutdown 0))
+          (funcall orig-fn restart)
+        (when (timerp e-lsp-deferred-shutdown-timer)
+          (cancel-timer e-lsp-deferred-shutdown-timer))
+        (setq e-lsp-deferred-shutdown-timer
+              (run-at-time
+              (if (numberp e-lsp-defer-shutdown) e-lsp-defer-shutdown 3)
+              nil (lambda (workspace)
+                    (let ((lsp--cur-workspace workspace))
+                      (unless (lsp--workspace-buffers lsp--cur-workspace)
+                        (funcall orig-fn))))
+              lsp--cur-workspace))))))
+
+(use-package lsp-ui
+  :defer t
+  :config
+  (setq lsp-ui-doc-max-height 8
+        lsp-ui-doc-max-width 35
+        lsp-ui-sideline-ignore-duplicate t
+        lsp-ui-sideline-show-hover nil))
+
+(use-package lsp-ivy
+  :commands (lsp-ivy-workspace-symbol lsp-ivy-global-workspace-symbol))
+
+;;
+;;; C/C++
+;;
+
+(use-package cc-mode
+  :mode ("\\.h\\'" . e-cc-guess-mode)
+  :hook (c-mode-common . rainbow-delimiters-mode)
+  :hook ((c-mode-local-vars c++-mode-local-vars) . e-cc-init-ffap-integration)
+  :hook ((c-mode-local-vars c++-mode-local-vars) . lsp)
+  :config
+  ;; Guess `cc-mode` minor (either C or C++) for the current header file.
+  (defun e-cc-guess-mode (&rest _)
+    (let ((base (file-name-sans-extension (buffer-file-name (buffer-base-buffer)))))
+      (cond ((or (file-exists-p (concat base ".cpp"))
+                 (file-exists-p (concat base ".cxx"))
+                 (file-exists-p (concat base ".cc")))
+             (c++-mode))
+            ((file-exists-p (concat base ".c"))
+             (c-mode))
+            ((functionp 'c-mode)
+             (funcall 'c-mode))
+            ((c-mode)))))
+
+  ;; Resolve include paths and integrate them in `ffap'.
+  (defun e-cc-init-ffap-integration (&rest _)
+    (when-let (project-root (or (bound-and-true-p irony--working-directory)
+                                (and (featurep 'lsp)
+                                    (or (lsp-workspace-root)
+                                        (e-project-root)))))
+      (require 'ffap)
+      (make-local-variable 'ffap-c-path)
+      (make-local-variable 'ffap-c++-path)
+      (cl-loop for dir in (or (cdr (assoc project-root nil))
+                              (cl-loop with path = (or buffer-file-name default-directory)
+                                      for dir in (list "inc" "include" "includes")
+                                      if (file-name-absolute-p dir)
+                                      collect dir
+                                      else if (projectile-locate-dominating-file path dir)
+                                      collect (expand-file-name dir it)))
+              do (add-to-list (pcase major-mode
+                                (`c-mode 'ffap-c-path)
+                                (`c++-mode 'ffap-c++-path))
+                              (expand-file-name dir project-root)))))
+
+  (with-eval-after-load 'ffap
+    (add-to-list 'ffap-alist '(c-mode . ffap-c-mode)))
+
+  (setq c-basic-offset tab-width
+        c-backspace-function #'delete-backward-char))
+
+(use-package modern-cpp-font-lock
+  :hook (c++-mode . modern-c++-font-lock-mode))
+
+(use-package ccls
+  :after lsp
+  :init
+  (with-eval-after-load 'projectile
+    (add-to-list 'projectile-globally-ignored-directories ".ccls-cache")
+    (add-to-list 'projectile-project-root-files-bottom-up ".ccls-root")
+    (add-to-list 'projectile-project-root-files-top-down-recurring "compile_commands.json")))
+
+(use-package demangle-mode
+  :hook llvm-mode)
+
+(use-package glsl-mode)
+
+(use-package company-glsl
+  :after glsl-mode
+  :config (set-company-backend! 'glsl-mode 'company-glsl))
+
+;;
+;;; CMake.
+;;
+
+(use-package cmake-mode
+  :straight (:host github :repo "emacsmirror/cmake-mode" :files (:defaults "*")))
+
+(use-package company-cmake
+  :straight (:host github :repo "purcell/company-cmake")
+  :after cmake-mode
+  :config (set-company-backend! 'cmake-mode 'company-cmake))
