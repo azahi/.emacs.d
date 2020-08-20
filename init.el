@@ -1406,10 +1406,15 @@
         (ignore-errors (flycheck-buffer))
         nil))))
 
-(use-package! flycheck-popup-tip
+(use-package flycheck-popup-tip
   :commands (flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup)
-  :hook (flycheck-mode . +syntax-init-popups-h)
+  :hook (flycheck-mode . e-flycheck-init-popups)
   :config
+  (defun e-flycheck-init-popups (&rest _)
+    (unless (and (bound-and-true-p lsp-ui-mode)
+                 lsp-ui-sideline-enable)
+        (flycheck-popup-tip-mode +1)))
+
   (with-eval-after-load 'evil
     ;; Don't display popups while in insert or replace mode, as it can affect
     ;; the cursor's position or cause disruptive input delays.
@@ -1420,9 +1425,6 @@
         (if evil-local-mode
             (eq evil-state 'normal)
           (not (bound-and-true-p company-backend)))))))
-
-(use-package flycheck-popup-tip
-  :commands (flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup))
 
 ;;
 ;;; LSP.
@@ -1521,10 +1523,9 @@
 
   ;; Resolve include paths and integrate them in `ffap'.
   (defun e-cc-init-ffap-integration (&rest _)
-    (when-let (project-root (or (bound-and-true-p irony--working-directory)
-                                (and (featurep 'lsp)
-                                    (or (lsp-workspace-root)
-                                        (e-project-root)))))
+    (when-let (project-root (and (featurep 'lsp)
+                                 (or (lsp-workspace-root)
+                                     (e-project-root))))
       (require 'ffap)
       (make-local-variable 'ffap-c-path)
       (make-local-variable 'ffap-c++-path)
