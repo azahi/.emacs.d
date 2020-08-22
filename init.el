@@ -1294,7 +1294,7 @@
   :hook (ido-mode . ido-ubiquitous-mode))
 
 (use-package ido-vertical-mode
-  :hook (ido-mode . ido-vertical-mode)
+  :hook ido-mode
   :config (setq ido-vertical-show-count t))
 
 (use-package ido-sort-mtime
@@ -1355,8 +1355,7 @@
 (use-package flyspell-correct
   :commands flyspell-correct-previous
   :general ([remap ispell-word] #'flyspell-correct-at-point)
-  :config
-  (require 'flyspell-correct-ivy nil t))
+  :config (require 'flyspell-correct-ivy nil t))
 
 (use-package flyspell-correct-ivy
   :after flyspell-correct)
@@ -1369,12 +1368,13 @@
   (flyspell-lazy-mode +1))
 
 (use-package langtool
+  :when (executable-find "langaugetool")
   :commands (langtool-check
              langtool-check-done
              langtool-show-message-at-point
              langtool-correct-buffer)
   :init (setq langtool-default-language "en-US")
-  :config (setq langtool-bin "/usr/bin/languagetool")) ;; TODO Support for multiple machines.
+  :config (setq langtool-bin "/usr/bin/languagetool"))
 
 (use-package writegood-mode
   :hook (org-mode markdown-mode rst-mode asciidoc-mode latex-mode))
@@ -1432,7 +1432,6 @@
 
 (use-package lsp-mode
   :commands lsp-install-server
-  :hook (prog-mode . lsp)
   :init
   (setq lsp-session-file (concat e-etc-dir "lsp-session"))
 
@@ -1578,3 +1577,169 @@
   :straight (:host github :repo "purcell/company-cmake")
   :after cmake-mode
   :config (set-company-backend! 'cmake-mode 'company-cmake))
+
+;;
+;;; Lisp.
+;;
+
+(use-package lispy
+  :hook ((lisp-mode . lispy-mode)
+         (emacs-lisp-mode . lispy-mode)
+         (scheme-mode . lispy-mode)
+         (racket-mode . lispy-mode))
+  :config
+  (setq lispy-close-quotes-at-end-p t)
+  (add-hook 'lispy-mode-hook #'turn-off-smartparens-mode))
+
+
+(use-package lispyville
+  :hook (lispy-mode . lispyville-mode)
+  :init
+  (setq lispyville-key-theme
+        '((operators normal)
+          c-w
+          (prettify insert)
+          (atom-movement normal visual)
+          slurp/barf-lispy
+          additional
+          additional-insert))
+  :config
+  (lispyville-set-key-theme))
+
+(use-package macrostep)
+
+(use-package highlight-quoted
+  :hook ((lisp-mode . highlight-quoted-mode)
+         (emacs-lisp-mode . highlight-quoted-mode)
+         (scheme-mode . highlight-quoted-mode)
+         (racket-mode . highlight-quoted-mode)))
+
+
+;;; Common Lisp.
+
+;; I'm pretty sure I always use only SBCL.
+(defvar inferior-lisp-program "sbcl")
+
+(with-eval-after-load 'lisp-mode
+  (add-hook 'lisp-mode-hook 'rainbow-delimiters-mode))
+
+(use-package sly
+  :hook (lisp-mode-local-vars . sly-editing-mode)
+  :init
+  :config
+  (setq sly-mrepl-history-file-name (concat e-cache-dir "sly-mrepl-history")
+        sly-kill-without-query-p t
+        sly-net-coding-system 'utf-8-unix
+        sly-complete-symbol-function 'sly-flex-completions)
+
+  (add-hook 'sly-mode-hook
+    (lambda (&rest _)
+      (cond ((sly-connected-p))
+            ((executable-find inferior-lisp-program)
+             (let ((sly-auto-start 'always))
+               (sly-auto-start)
+               (add-hook 'kill-buffer-hook
+                  (lambda (&rest _)
+                    (unless (cl-loop for buf in (delq (current-buffer) (buffer-list))
+                                    if (and (buffer-local-value 'sly-mode buf)
+                                            (get-buffer-window buf))
+                                    return t)
+                      (dolist (conn (sly--purge-connections))
+                        (sly-quit-lisp-internal conn 'sly-quit-sentinel t))
+                      (let (kill-buffer-hook kill-buffer-query-functions)
+                        (mapc #'kill-buffer
+                              (cl-loop for buf in (delq (current-buffer) (buffer-list))
+                                      if (buffer-local-value 'sly-mode buf)
+                                      collect buf)))))
+                  nil t)))
+            ((message "WARNING: Couldn't find `inferior-lisp-program' (%s)"
+                      inferior-lisp-program)))))
+
+  (add-hook 'sly-mode-hook #'evil-normalize-keymaps))
+
+(use-package sly-macrostep
+  :after macrostep)
+
+(use-package sly-repl-ansi-color
+  :defer t
+  :init
+  (add-to-list 'sly-contribs 'sly-repl-ansi-color))
+
+;;; Emacs Llisp.
+
+(with-eval-after-load 'elisp-mode
+  (add-hook 'emacs-lisp-mode-hook
+    ;; Allow folding of outlines in comments.
+    #'outline-minor-mode
+    ;; Make parenthesis depth easier to distinguish at a glance.
+    #'rainbow-delimiters-mode
+    ;; Make quoted symbols easier to distinguish from free variables.
+    #'highlight-quoted-mode)
+
+  ;; Recenter window after following definition.
+  (advice-add #'elisp-def :after #'recenter)
+
+  ;; Display variable value next to documentation in `eldoc'.
+  (advice-add #'elisp-get-var-docstring :around
+    (lambda (orig-fn sym)
+      (when-let (ret (funcall orig-fn sym))
+        (concat ret " "
+                (let* ((truncated " [...]")
+                      (print-escape-newlines t)
+                      (str (symbol-value sym))
+                      (str (prin1-to-string str))
+                      (limit (- (frame-width) (length ret) (length truncated) 1)))
+                  (format (format "%%0.%ds%%s" limit)
+                          (propertize str 'face 'warning)
+                          (if (< (length str) limit) "" truncated))))))))
+
+(use-package ielm
+  :defer t
+  :config
+  ;; Adapted from http://www.modernemacs.com/post/comint-highlighting/ to add
+  ;; syntax highlighting to `ielm' REPLs.
+  (add-hook 'ielm-mode-hook
+    (lambda (&rest _)
+      (font-lock-add-keywords
+      nil (cl-loop for (matcher . match-highlights)
+                    in (append lisp-el-font-lock-keywords-2 lisp-cl-font-lock-keywords-2)
+                    collect
+                    `((lambda (limit)
+                        (and ,(if (symbolp matcher)
+                                  `(,matcher limit)
+                                `(re-search-forward ,matcher limit t))
+                            (> (match-beginning 0) (car comint-last-prompt))
+                            (let ((state (sp--syntax-ppss)))
+                              (not (or (nth 3 state)
+                                        (nth 4 state))))))
+                      ,@match-highlights))))))
+
+(use-package elisp-def)
+
+;;; Scheme.
+
+(use-package scheme
+  :hook (scheme-mode . rainbow-delimiters-mode))
+
+(use-package geiser
+  :defer t
+  :init
+  (setq geiser-active-implementations '(guile chicken mit chibi chez)
+        geiser-autodoc-identifier-format "%s → %s"
+        geiser-smart-tab-p t)
+  (push 'racket geiser-active-implementations))
+
+(use-package flycheck-guile
+  :after geiser)
+
+;;; Racket.
+
+(use-package racket-mode
+  :mode "\\.rkt\\'" ;; Give it precedence over :lang scheme
+  :hook (racket-repl-mode . racket-unicode-input-method-enable)
+  :hook (racket-mode . rainbow-delimiters-mode)
+  :config
+  (add-hook 'racket-mode-local-vars-hook #'racket-xp-mode)
+  (add-hook 'racket-xp-mode-hook
+    (lambda (&rest _)
+      (cl-pushnew 'racket flycheck-disabled-checkers))))
