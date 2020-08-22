@@ -1665,16 +1665,11 @@
   :init
   (add-to-list 'sly-contribs 'sly-repl-ansi-color))
 
-;;; Emacs Llisp.
+;;; Emacs Lisp.
 
 (with-eval-after-load 'elisp-mode
-  (add-hook 'emacs-lisp-mode-hook
-    ;; Allow folding of outlines in comments.
-    #'outline-minor-mode
-    ;; Make parenthesis depth easier to distinguish at a glance.
-    #'rainbow-delimiters-mode
-    ;; Make quoted symbols easier to distinguish from free variables.
-    #'highlight-quoted-mode)
+  (add-hook 'emacs-lisp-mode-hook #'outline-minor-mode)
+  (add-hook 'emacs-lisp-mode-hook #'rainbow-delimiters-mode)
 
   ;; Recenter window after following definition.
   (advice-add #'elisp-def :after #'recenter)
@@ -1735,7 +1730,7 @@
 ;;; Racket.
 
 (use-package racket-mode
-  :mode "\\.rkt\\'" ;; Give it precedence over :lang scheme
+  :mode "\\.rkt\\'"
   :hook (racket-repl-mode . racket-unicode-input-method-enable)
   :hook (racket-mode . rainbow-delimiters-mode)
   :config
