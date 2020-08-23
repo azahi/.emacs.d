@@ -386,6 +386,17 @@
   (unless (server-running-p)
     (server-start)))
 
+(defvar-local e-electric-indent-words '())
+(with-eval-after-load 'electric
+  (setq-default electric-indent-chars '(?\n ?\^?))
+
+  (add-hook 'electric-indent-functions
+    (lambda (_c)
+      (when (and (eolp) e-electric-indent-words)
+        (save-excursion
+          (backward-word)
+          (looking-at-p (concat "\\<" (regexp-opt e-electric-indent-words))))))))
+
 ;;; External packages.
 
 (use-package auto-minor-mode)
@@ -913,6 +924,173 @@
   (advice-add #'projectile-default-generic-command :around
     (lambda (orig-fn &rest args))
       (ignore-errors (apply orig-fn args))))
+
+;;
+;;; Dired.
+;;
+
+(with-eval-after-load 'dired
+  (setq dired-auto-revert-buffer t
+        dired-dwim-target t
+        dired-hide-details-hide-symlink-targets nil
+        ;; Always copy/delete recursively.
+        dired-recursive-copies  'always
+        dired-recursive-deletes 'top
+        image-dired-dir (concat e-cache-dir "image-dired/")
+        image-dired-db-file (concat image-dired-dir "db.el")
+        image-dired-gallery-dir (concat image-dired-dir "gallery/")
+        image-dired-temp-image-file (concat image-dired-dir "temp-image")
+        image-dired-temp-rotate-image-file (concat image-dired-dir "temp-rotate-image")
+        image-dired-thumb-size 150)
+
+  (let ((args (list "-ahl" "-v" "--group-directories-first")))
+    (setq dired-listing-switches (string-join args " "))
+
+    (add-hook 'dired-mode-hook
+      (lambda (&rest _)
+        (when (file-remote-p default-directory)
+          (setq-local dired-actual-switches (car args))))))
+
+  ;; Don't complain about this command being disabled.
+  (put 'dired-find-alternate-file 'disabled nil))
+
+(use-package dired-rsync
+  :general (dired-mode-map "C-c C-r" #'dired-rsync))
+
+(use-package diredfl
+  :hook (dired-mode . diredfl-mode))
+
+(use-package diff-hl
+  :hook (dired-mode . diff-hl-dired-mode-unless-remote)
+  :hook (magit-post-refresh . diff-hl-magit-post-refresh)
+  :config
+  ;; Use margin instead of fringe.
+  (diff-hl-margin-mode))
+
+(use-package fd-dired
+  :when e-projectile-fd-binary
+  :defer t
+  :init
+  (global-set-key [remap find-dired] #'fd-dired))
+
+;;
+;;; VC.
+;;
+
+(with-eval-after-load 'vc-annotate
+  (define-key vc-annotate-mode-map [remap quit-window] #'kill-current-buffer))
+
+(use-package git-timemachine
+  :init
+  (setq git-timemachine-show-minibuffer-details t)
+  :config
+  (advice-add #'git-timemachine--show-minibuffer-details :override
+    (lambda (revision)
+      (let* ((date-relative (nth 3 revision))
+            (date-full (nth 4 revision))
+            (author (if git-timemachine-show-author (concat (nth 6 revision) ": ") ""))
+            (sha-or-subject (if (eq git-timemachine-minibuffer-detail 'commit) (car revision) (nth 5 revision))))
+        (setq header-line-format
+              (format "%s%s [%s (%s)]"
+                      (propertize author 'face 'git-timemachine-minibuffer-author-face)
+                      (propertize sha-or-subject 'face 'git-timemachine-minibuffer-detail-face)
+                      date-full date-relative)))))
+
+  (with-eval-after-load 'evil
+    (add-hook 'git-timemachine-mode-hook #'evil-normalize-keymaps)))
+
+(use-package git-commit
+  :hook (emacs-startup . global-git-commit-mode)
+  :config
+  ;; https://chris.beams.io/posts/git-commit/
+  (setq git-commit-summary-max-length 50
+        git-commit-style-convention-checks '(overlong-summary-line non-empty-second-line))
+  (add-hook 'git-commit-mode-hook
+    (lambda (&rest _)
+      (setq qfill-column 72)))
+
+  (add-hook 'git-commit-setup-hook
+    (lambda (&rest _)
+      (when (and (bound-and-true-p evil-mode)
+                 (bobp) (eolp))
+        (evil-insert-state)))))
+
+(use-package browse-at-remote
+  :init (setq browse-at-remote-add-line-number-if-no-region-selected nil))
+
+(use-package gitconfig-mode)
+
+(use-package gitignore-mode)
+
+;;
+;;; Undo.
+;;
+
+(use-package undo-fu
+  :hook (emacs-startup . undo-fu-mode)
+  :init
+  (with-eval-after-load 'undo-tree
+    (global-undo-tree-mode -1))
+  :config
+  (setq undo-limit 400000
+        undo-strong-limit 3000000
+        undo-outer-limit 3000000)
+
+  (define-minor-mode undo-fu-mode
+    :keymap (let ((map (make-sparse-keymap)))
+              (define-key map [remap undo] #'undo-fu-only-undo)
+              (define-key map [remap redo] #'undo-fu-only-redo)
+              (define-key map (kbd "C-_")     #'undo-fu-only-undo)
+              (define-key map (kbd "M-_")     #'undo-fu-only-redo)
+              (define-key map (kbd "C-M-_")   #'undo-fu-only-redo-all)
+              (define-key map (kbd "C-x r u") #'undo-fu-session-save)
+              (define-key map (kbd "C-x r U") #'undo-fu-session-recover)
+              map)
+    :init-value nil
+    :global t))
+
+(use-package undo-fu-session
+  :hook (undo-fu-mode . global-undo-fu-session-mode)
+  :preface
+  (setq undo-fu-session-directory (concat e-cache-dir "undo-fu-session/")
+        undo-fu-session-incompatible-files '("\\.gpg$" "/COMMIT_EDITMSG\\'" "/git-rebase-todo\\'"))
+
+  (with-eval-after-load 'undo-fu-session
+    (when (executable-find "zstd")
+      (advice-add #'undo-fu-session--make-file-name :filter-return
+        (lambda (filename)
+          (if undo-fu-session-compression
+              (concat (file-name-sans-extension filename) ".zst")
+            filename))))))
+;;
+;;; IBuffer.
+;;
+
+(with-eval-after-load 'ibuffer
+  (setq ibuffer-show-empty-filter-groups nil
+        ibuffer-filter-group-name-face '(:inherit (success bold)))
+
+  ;; Redefine size column to display human readable size.
+  (define-ibuffer-column size
+    (:name "Size"
+     :inline t
+     :header-mouse-map ibuffer-size-header-map)
+    (file-size-human-readable (buffer-size)))
+
+  (advice-add #'ibuffer-find-file :override
+    (lambda (_file &optional _wildcards)
+      (interactive)
+      (counsel-find-file
+        (let ((buf (ibuffer-current-buffer)))
+          (if (buffer-live-p buf)
+              (with-current-buffer buf
+                default-directory)
+            default-directory))))))
+
+(use-package ibuffer-projectile
+  :hook (ibuffer . ibuffer-projectile-set-filter-groups))
+
+(use-package ibuffer-vc)
 
 ;;
 ;;; EViL.
