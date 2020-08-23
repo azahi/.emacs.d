@@ -18,9 +18,30 @@
 ;;
 
 (defun e-enlist (exp)
-  "Return EXP wrapped in a list, or as-is if already a list."
   (declare (pure t) (side-effect-free t))
   (if (listp exp) exp (list exp)))
+
+(defun e-path-p (&rest segments)
+  (let ((dir (pop segments)))
+    (unless segments
+      (setq dir (expand-file-name dir)))
+    (while segments
+      (setq dir (expand-file-name (car segments) dir)
+            segments (cdr segments)))
+    dir))
+
+(defun e-glob (&rest segments)
+  (let* (case-fold-search
+         (dir (apply #'e-path-p segments)))
+    (if (string-match-p "[[*?]" dir)
+        (file-expand-wildcards dir t)
+      (if (file-exists-p dir)
+          dir))))
+
+(defun e-path (&rest segments)
+  (if segments
+      (apply #'e-path-p segments)
+    (file!)))
 
 ;;
 ;;; Variables.
@@ -1425,6 +1446,145 @@
         (if evil-local-mode
             (eq evil-state 'normal)
           (not (bound-and-true-p company-backend)))))))
+
+;;
+;;; Magit.
+;;
+
+(use-package magit
+  :commands magit-file-delete
+  :init
+  ;; Must be set early to prevent ~/.emacs.d/transient from being created
+  (setq transient-levels-file  (concat e-etc-dir "transient/levels")
+        transient-values-file  (concat e-etc-dir "transient/values")
+        transient-history-file (concat e-etc-dir "transient/history"))
+  :config
+  (setq transient-default-level 5
+        magit-diff-refine-hunk t
+        magit-save-repository-buffers nil
+        magit-revision-insert-related-refs nil)
+  (add-hook 'magit-process-mode-hook #'goto-address-mode)
+
+  ;; Center the target file.
+  (advice-add #'magit-status-here :after #'recenter)
+
+  (unless (file-exists-p "~/.git-credential-cache/")
+    (setq magit-credential-cache-daemon-socket
+          (e-glob (or (getenv "XDG_CACHE_HOME")
+                         "~/.cache/")
+                     "git/credential/socket")))
+
+  ;; Prevent scrolling when manipulating `magit-status' hunks.
+  (defvar e-magit-pos nil)
+  (add-hook 'magit-pre-refresh-hook
+    (lambda (&rest _)
+      (setq-local e-magit-pos (list (current-buffer) (point) (window-start)))))
+  (add-hook 'magit-post-refresh-hook
+    (lambda (&rest _)
+      (when (and e-magit-pos (eq (current-buffer) (car e-magit-pos)))
+        (goto-char (cadr e-magit-pos))
+        (set-window-start nil (caddr e-magit-pos) t)
+        (kill-local-variable 'e-magit-pos))))
+
+  ;; Add additional switches that seem common enough.
+  (transient-append-suffix 'magit-fetch "-p"
+    '("-t" "Fetch all tags" ("-t" "--tags")))
+  (transient-append-suffix 'magit-pull "-r"
+    '("-a" "Autostash" "--autostash"))
+
+  ;; Close transient with ESC.
+  (define-key transient-map [escape] #'transient-quit-one)
+
+  ;; Optimization.
+  (add-hook 'magit-status-mode-hook
+    (lambda (&rest _)
+      (when-let (path (executable-find magit-git-executable))
+        (setq-local magit-git-executable path)))))
+
+(use-package forge
+  :commands (forge-create-pullreq forge-create-issue)
+  :preface
+  (setq forge-database-file (concat e-etc-dir "forge/forge-database.sqlite"))
+  :config
+  (advice-add #'forge-get-repository :before-while
+    (lambda (&rest _)
+      (file-executable-p emacsql-sqlite-executable)))
+
+  (advice-add #'forge-dispatch :before
+    (lambda (&rest _)
+      (unless (file-executable-p emacsql-sqlite-executable)
+        (emacsql-sqlite-compile 2)
+        (if (not (file-executable-p emacsql-sqlite-executable))
+            (message (concat "Failed to build emacsql; forge may not work correctly.\n"
+                            "See *Compile-Log* buffer for details"))
+          (setq forge--sqlite-available-p t)
+          (magit-add-section-hook 'magit-status-sections-hook 'forge-insert-pullreqs nil t)
+          (magit-add-section-hook 'magit-status-sections-hook 'forge-insert-issues   nil t)
+          (with-eval-after-load 'forge-topic
+            (dolist (hook forge-bug-reference-hooks)
+              (add-hook hook #'forge-bug-reference-setup))))))))
+
+(use-package github-review
+  :after magit
+  :config
+  (defun e-magit-start-github-review (arg)
+    (interactive "P")
+    (call-interactively
+      (if (or arg (not (featurep 'forge)))
+          #'github-review-start
+        #'github-review-forge-pr-at-point)))
+  (transient-append-suffix 'magit-merge "i"
+    '("y" "Review pull request" e-magit-start-github-review))
+  (with-eval-after-load 'forge
+    (transient-append-suffix 'forge-dispatch "c u"
+      '("c r" "Review pull request" e-magit-start-github-review))))
+
+(use-package magit-todos
+  :after magit
+  :config
+  (setq magit-todos-keyword-suffix "\\(?:([^)]+)\\)?:?")
+  (define-key magit-todos-section-map "j" nil))
+
+(use-package magit-gitflow
+  :hook (magit-mode . turn-on-magit-gitflow))
+
+(use-package evil-magit
+  :after magit
+  :init
+  (setq evil-magit-state 'normal
+        evil-magit-use-z-for-folds t)
+  :config
+  (undefine-key! magit-mode-map
+    ;; Replaced by z1, z2, z3, etc
+    "M-1" "M-2" "M-3" "M-4"
+    "1" "2" "3" "4"
+    "0") ; moved to g=
+  (evil-define-key* 'normal magit-status-mode-map [escape] nil)
+  (evil-define-key* '(normal visual) magit-mode-map
+    "%"  #'magit-gitflow-popup
+    "zt" #'evil-scroll-line-to-top
+    "zz" #'evil-scroll-line-to-center
+    "zb" #'evil-scroll-line-to-bottom
+    "g=" #'magit-diff-default-context
+    "gi" #'forge-jump-to-issues
+    "gm" #'forge-jump-to-pullreqs)
+  (define-key! 'normal
+    (magit-status-mode-map
+     magit-stash-mode-map
+     magit-revision-mode-map
+     magit-diff-mode-map)
+    [tab] #'magit-section-toggle)
+  (with-eval-after-load 'git-rebase
+    (dolist (key '(("M-k" . "gk") ("M-j" . "gj")))
+      (when-let (desc (assoc (car key) evil-magit-rebase-commands-w-descriptions))
+        (setcar desc (cdr key))))
+    (evil-define-key* evil-magit-state git-rebase-mode-map
+      "gj" #'git-rebase-move-line-down
+      "gk" #'git-rebase-move-line-up))
+  (transient-replace-suffix 'magit-dispatch 'magit-worktree
+    '("%" "Gitflow" magit-gitflow-popup))
+  (transient-append-suffix 'magit-dispatch '(0 -1 -1)
+    '("*" "Worktree" magit-worktree)))
 
 ;;
 ;;; LSP.
