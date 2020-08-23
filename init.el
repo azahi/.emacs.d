@@ -1583,10 +1583,9 @@
 ;;
 
 (use-package lispy
-  :hook ((lisp-mode . lispy-mode)
-         (emacs-lisp-mode . lispy-mode)
-         (scheme-mode . lispy-mode)
-         (racket-mode . lispy-mode))
+  :hook ((lisp-mode
+          emacs-lisp-mode
+          scheme-mode) . lispy-mode)
   :config
   (setq lispy-close-quotes-at-end-p t)
   (add-hook 'lispy-mode-hook #'turn-off-smartparens-mode))
@@ -1609,15 +1608,24 @@
 (use-package macrostep)
 
 (use-package highlight-quoted
-  :hook ((lisp-mode . highlight-quoted-mode)
-         (emacs-lisp-mode . highlight-quoted-mode)
-         (scheme-mode . highlight-quoted-mode)
-         (racket-mode . highlight-quoted-mode)))
+  :hook ((lisp-mode
+          emacs-lisp-mode
+          scheme-mode) . highlight-quoted-mode))
 
+(use-package parinfer
+  :hook ((emacs-lisp-mode
+          scheme-mode
+          lisp-mode) . parinfer-mode)
+  :init
+  (setq parinfer-extensions
+        '(defaults
+          pretty-parens
+          smart-tab
+          smart-yank))
+  (push 'evil parinfer-extensions))
 
 ;;; Common Lisp.
 
-;; I'm pretty sure I always use only SBCL.
 (defvar inferior-lisp-program "sbcl")
 
 (with-eval-after-load 'lisp-mode
@@ -1719,22 +1727,5 @@
 (use-package geiser
   :defer t
   :init
-  (setq geiser-active-implementations '(guile chicken mit chibi chez)
-        geiser-autodoc-identifier-format "%s → %s"
-        geiser-smart-tab-p t)
-  (push 'racket geiser-active-implementations))
-
-(use-package flycheck-guile
-  :after geiser)
-
-;;; Racket.
-
-(use-package racket-mode
-  :mode "\\.rkt\\'"
-  :hook (racket-repl-mode . racket-unicode-input-method-enable)
-  :hook (racket-mode . rainbow-delimiters-mode)
-  :config
-  (add-hook 'racket-mode-local-vars-hook #'racket-xp-mode)
-  (add-hook 'racket-xp-mode-hook
-    (lambda (&rest _)
-      (cl-pushnew 'racket flycheck-disabled-checkers))))
+  (setq geiser-active-implementations '(chicken)
+        geiser-smart-tab-p t))
