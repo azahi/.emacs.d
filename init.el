@@ -64,6 +64,8 @@
 (defconst e-autoload-file (concat e-local-dir "autoloads.el"))
 (defconst e-env-file (concat e-local-dir "env"))
 
+(defvar-local e-inhibit-indent-detection nil)
+
 ;; Unicode.
 (when (fboundp 'set-charset-priority)
   (set-charset-priority 'unicode))
@@ -416,10 +418,11 @@
       result)))
 
 (use-package dtrt-indent
-  :hook ((change-major-mode-after-body read-only-mode) . e-detect-indentation-h)
+  :hook ((change-major-mode-after-body read-only-mode) . e-detect-indentation)
   :config
-  (defun e-detect-indentation-h ()
+  (defun e-detect-indentation ()
     (unless (or (not after-init-time)
+                e-inhibit-indent-detection
                 (eq major-mode 'fundamental-mode)
                 (member (substring (buffer-name) 0 1) '(" " "*")))
       (let ((inhibit-message nil))
@@ -427,6 +430,38 @@
 
   ;; Always keep tab-width up-to-date.
   (push '(t tab-width) dtrt-indent-hook-generic-mapping-list))
+
+(use-package editorconfig
+  :hook (emacs-startup . editorconfig-mode)
+  :config
+  (when (require 'ws-butler nil t)
+    (setq editorconfig-trim-whitespaces-mode 'ws-butler-mode))
+
+  (defvar e-editorconfig-mode-alist
+    '((emacs-lisp-mode . "el")
+      (js2-mode        . "js")
+      (perl-mode       . "pl")
+      (php-mode        . "php")
+      (python-mode     . "py")
+      (ruby-mode       . "rb")
+      (sh-mode         . "sh")))
+  (advice-add #'editorconfig-call-editorconfig-exec :around
+    (lambda (orig-fn)
+      (let ((buffer-file-name
+            (if (and (not (bound-and-true-p org-src-mode))
+                      (file-name-extension buffer-file-name))
+                buffer-file-name
+              (format "%s%s" (buffer-file-name (buffer-base-buffer))
+                      (if-let (ext (alist-get major-mode e-editorconfig-mode-alist))
+                          (concat "." ext)
+                        "")))))
+        (funcall orig-fn))))
+
+  (add-hook 'editorconfig-after-apply-functions
+    (lambda (props)
+      (when (or (gethash 'indent_style props)
+                (gethash 'indent_size props))
+        (setq e-inhibit-indent-detection 'editorconfig)))))
 
 (use-package helpful
   :commands helpful--read-symbol
