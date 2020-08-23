@@ -1,7 +1,11 @@
-;;; init.el -*- lexical-binding: t; -*-
+;;; init.el --- Emacs initialization file -*- lexical-binding: t; -*-
 
-;; TODO Split this disgusting mess into different files.
-;; TODO Pull hooks from `emacs-startup-hook', make it as "lazy" as possible.
+;;; Commentary:
+;;; TODO Split this disgusting mess into different files.
+;;; TODO Pull hooks from `emacs-startup-hook', make it as "lazy" as possible.
+
+;;; Code:
+;;;
 
 ;; Prevent garbage collection from running before invoking `ghcm-mode'.
 (setq gc-cons-threshold most-positive-fixnum)
@@ -1889,3 +1893,35 @@
   :init
   (setq geiser-active-implementations '(chicken)
         geiser-smart-tab-p t))
+
+;;
+;;; Pass.
+;;
+
+(use-package auth-source-pass
+  :straight (:host github :repo "DamienCassou/auth-password-store")
+  :config (auth-source-pass-enable))
+
+(use-package pass
+  :config
+  (define-key! pass-mode-map
+    "j"    #'pass-next-entry
+    "k"    #'pass-prev-entry
+    "d"    #'pass-kill
+    "\C-j" #'pass-next-directory
+    "\C-k" #'pass-prev-directory))
+
+(use-package password-store
+  :init (setq password-store-password-length 20)
+  :config
+  (advice-add #'auth-source-pass--read-entry :override
+    (lambda (entry)
+      (with-temp-buffer
+        (insert-file-contents
+        (expand-file-name (format "%s.gpg" entry) (password-store-dir)))
+        (buffer-substring-no-properties (point-min) (point-max))))))
+
+(use-package ivy-pass)
+
+(provide 'init)
+;;; init.el ends here
