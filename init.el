@@ -85,6 +85,7 @@
 (defconst e-autoload-file (concat e-local-dir "autoloads.el"))
 (defconst e-env-file (concat e-local-dir "env"))
 
+;; A buffer-local flag for `dtrt-indent' and `editorconfig'.
 (defvar-local e-inhibit-indent-detection nil)
 
 ;; Unicode.
@@ -568,9 +569,7 @@
     '((emacs-lisp-mode . "el")
       (js2-mode        . "js")
       (perl-mode       . "pl")
-      (php-mode        . "php")
       (python-mode     . "py")
-      (ruby-mode       . "rb")
       (sh-mode         . "sh")))
   (advice-add #'editorconfig-call-editorconfig-exec :around
     (lambda (orig-fn)
