@@ -14,7 +14,6 @@
 ;;; External libraries.
 ;;
 
-(require 'cl)
 (require 'subr-x)
 
 ;;
@@ -678,7 +677,7 @@
   (add-hook 'ediff-before-setup-hook
     (lambda (&rest _)
       (setq e-ediff-saved-wconf (current-window-configuration))))
-  (add-hook 'ediff-quit-hook :append
+  (add-hook 'ediff-quit-hook
     (lambda (&rest _)
       (when (window-configuration-p e-ediff-saved-wconf)
         (set-window-configuration e-ediff-saved-wconf)))))
@@ -1022,46 +1021,6 @@
 
 (use-package gitignore-mode)
 
-;;
-;;; Undo.
-;;
-
-(use-package undo-fu
-  :hook (emacs-startup . undo-fu-mode)
-  :init
-  (with-eval-after-load 'undo-tree
-    (global-undo-tree-mode -1))
-  :config
-  (setq undo-limit 400000
-        undo-strong-limit 3000000
-        undo-outer-limit 3000000)
-
-  (define-minor-mode undo-fu-mode
-    :keymap (let ((map (make-sparse-keymap)))
-              (define-key map [remap undo] #'undo-fu-only-undo)
-              (define-key map [remap redo] #'undo-fu-only-redo)
-              (define-key map (kbd "C-_")     #'undo-fu-only-undo)
-              (define-key map (kbd "M-_")     #'undo-fu-only-redo)
-              (define-key map (kbd "C-M-_")   #'undo-fu-only-redo-all)
-              (define-key map (kbd "C-x r u") #'undo-fu-session-save)
-              (define-key map (kbd "C-x r U") #'undo-fu-session-recover)
-              map)
-    :init-value nil
-    :global t))
-
-(use-package undo-fu-session
-  :hook (undo-fu-mode . global-undo-fu-session-mode)
-  :preface
-  (setq undo-fu-session-directory (concat e-cache-dir "undo-fu-session/")
-        undo-fu-session-incompatible-files '("\\.gpg$" "/COMMIT_EDITMSG\\'" "/git-rebase-todo\\'"))
-
-  (with-eval-after-load 'undo-fu-session
-    (when (executable-find "zstd")
-      (advice-add #'undo-fu-session--make-file-name :filter-return
-        (lambda (filename)
-          (if undo-fu-session-compression
-              (concat (file-name-sans-extension filename) ".zst")
-            filename))))))
 ;;
 ;;; IBuffer.
 ;;
@@ -1598,7 +1557,8 @@
 (use-package flyspell-correct-ivy
   :after flyspell-correct)
 
-(use-package flyspell-lazy
+(use-package flyspell-lazy ;; Deprecated
+  :disabled t
   :after flyspell
   :config
   (setq flyspell-lazy-idle-seconds 1
@@ -2108,6 +2068,405 @@
         geiser-smart-tab-p t))
 
 ;;
+;;; Org-mode.
+;;
+
+(add-hook 'straight-use-package-pre-build-functions
+  (lambda (package &rest _)
+    (when (equal package "org-mode")
+      (with-temp-file (expand-file-name "org-version.el" (straight--repos-dir "org-mode"))
+        (insert "(fset 'org-release (lambda () \"9.4\"))\n"
+                "(fset 'org-git-version #'ignore)\n"
+                "(provide 'org-version)\n")))))
+
+(use-package org
+  :straight (:host github
+             :repo "emacs-straight/org-mode"
+             :files ("*.el" "lisp/*.el" "contrib/lisp/*.el")
+             :local-repo "org"
+             :includes (org)
+             )
+  :preface
+  ;;; Directory.
+  (setq org-directory "~/org"
+        org-id-locations-file (expand-file-name ".origids" org-directory))
+  (setq org-publish-timestamp-directory (concat e-cache-dir "org-timestamps/")
+        org-preview-latex-image-directory (concat e-cache-dir "org-latex/")
+        org-list-allow-alphabetical t)
+  ;;; Agenda.
+  (setq org-agenda-files (list org-directory))
+  (setq-default
+   org-agenda-deadline-faces
+   '((1.001 . error)
+     (1.0 . org-warning)
+     (0.5 . org-upcoming-deadline)
+     (0.0 . org-upcoming-distant-deadline))
+   org-agenda-window-setup 'current-window
+   org-agenda-skip-unavailable-files t
+   org-agenda-span 10
+   org-agenda-start-on-weekday nil
+   org-agenda-start-day "-3d"
+   org-agenda-inhibit-startup t)
+
+  (setq org-indirect-buffer-display 'current-window
+        org-enforce-todo-dependencies t
+        org-fontify-done-headline t
+        org-fontify-quote-and-verse-blocks t
+        org-fontify-whole-heading-line t
+        org-footnote-auto-label 'plain
+        org-hide-leading-stars t
+        org-image-actual-width nil
+        org-imenu-depth 8
+        ;; Sub-lists should have different bullets.
+        org-list-demote-modify-bullet '(("+" . "-") ("-" . "+") ("*" . "+") ("1." . "a."))
+        org-priority-faces
+        '((?A . error)
+          (?B . warning)
+          (?C . success))
+        org-startup-indented t
+        org-tags-column 0
+        org-use-sub-superscripts '{})
+
+  (setq org-refile-targets
+        '((nil :maxlevel . 3)
+          (org-agenda-files :maxlevel . 3))
+        org-refile-use-outline-path 'file
+        org-outline-path-complete-in-steps nil)
+
+  ;; Define faces manually.
+  (with-no-warnings
+    (custom-declare-face 'e-org-todo-active  '((t (:inherit (bold font-lock-constant-face org-todo)))) "")
+    (custom-declare-face 'e-org-todo-project '((t (:inherit (bold font-lock-doc-face org-todo)))) "")
+    (custom-declare-face 'e-org-todo-onhold  '((t (:inherit (bold warning org-todo)))) ""))
+  (setq org-todo-keywords
+        '((sequence
+           "TODO(t)"
+           "PROJ(p)"
+           "STRT(s)"
+           "WAIT(w)"
+           "HOLD(h)"
+           "|"
+           "DONE(d)"
+           "CANC(k)")
+          (sequence
+           "[ ](T)"
+           "[-](S)"
+           "[?](W)"
+           "|"
+           "[X](D)"))
+        org-todo-keyword-faces
+        '(("[-]"  . e-org-todo-active)
+          ("STRT" . e-org-todo-active)
+          ("[?]"  . e-org-todo-onhold)
+          ("WAIT" . e-org-todo-onhold)
+          ("HOLD" . e-org-todo-onhold)
+          ("PROJ" . e-org-todo-project)))
+
+  ;; Display full link in minibuffer when cursor is over it.
+  (advice-add #'org-eldoc-documentation-function :before-until
+    (lambda (&rest _)
+      (when-let (link (org-element-property :raw-link (org-element-context)))
+        (format "Link: %s" link))))
+
+  ;;; Babel.
+  (setq org-src-preserve-indentation t
+        org-src-tab-acts-natively t
+        org-confirm-babel-evaluate nil
+        org-link-elisp-confirm-function nil
+        org-src-window-setup 'other-window
+        org-babel-lisp-eval-fn #'sly-eval)
+
+  ;; Mimic `newline-and-indent' in src blocks with lang-appropriate indentation.
+  (advice-add #'org-return :after
+    (lambda (&optional indent _arg _interactive)
+      (when (and indent
+                org-src-tab-acts-natively
+                (org-in-src-block-p t))
+        (org-babel-do-in-edit-buffer
+        (call-interactively #'indent-for-tab-command)))))
+
+  (add-hook 'org-babel-after-execute-hook #'org-redisplay-inline-images)
+
+  (with-eval-after-load 'python
+    (setq org-babel-python-command python-shell-interpreter))
+
+  ;; Lazy-load babel.
+  (defvar e-org-babel-mode-alist
+    '((cpp . C)
+      (C++ . C)
+      (elisp . emacs-lisp)
+      (sh . shell)
+      (bash . shell)))
+
+  (defun e-org-babel-lazy-load (lang &optional async)
+    (cl-check-type lang (or symbol null))
+    (unless (cdr (assq lang org-babel-load-languages))
+      (when async
+        (require 'ob-async nil t))
+      (prog1 (or (run-hook-with-args-until-success '+org-babel-load-functions lang)
+                 (require (intern (format "ob-%s" lang)) nil t)
+                 (require lang nil t))
+        (add-to-list 'org-babel-load-languages (cons lang t)))))
+
+  ;; Load babel libraries lazily when babel blocks are executed.
+  (defun e-org-babel-lazy-load-library (info)
+    (let* ((lang (nth 0 info))
+           (lang (cond ((symbolp lang) lang)
+                       ((stringp lang) (intern lang))))
+           (lang (or (cdr (assq lang e-org-babel-mode-alist))
+                     lang)))
+      (e-org-babel-lazy-load lang (assq :async (nth 2 info)))
+      t))
+
+  ;; Lazy load a babel package when a block is executed during exporting.
+  (advice-add #'org-babel-exp-src-block :before
+    (lambda (&rest _)
+      (e-org-babel-lazy-load-library (org-babel-get-src-block-info))))
+
+  ;; Lazy load a babel package to ensure syntax highlighting.
+  (advice-add #'org-src--get-lang-mode :before
+    (lambda (lang)
+      (or (cdr (assoc lang org-src-lang-modes))
+          (e-org-babel-lazy-load lang))))
+
+  ;; Lazy load a babel package when a block is executed during exporting.
+  (advice-add #'org-babel-confirm-evaluate :after-while #'e-org-babel-lazy-load-library)
+
+  (advice-add #'org-babel-do-load-languages :override #'ignore)
+
+  ;;; Capture.
+  (defvar e-org-capture-todo-file "todo.org")
+  (defvar e-org-capture-notes-file "notes.org")
+  (defvar e-org-capture-journal-file "journal.org")
+
+  (setq org-default-notes-file (expand-file-name e-org-capture-notes-file org-directory)
+        e-org-capture-journal-file (expand-file-name e-org-capture-journal-file org-directory)
+        org-capture-templates
+        '(("t" "Personal todo" entry
+           (file+headline e-org-capture-todo-file "Inbox")
+           "* [ ] %?\n%i\n%a" :prepend t)
+          ("n" "Personal notes" entry
+           (file+headline e-org-capture-notes-file "Inbox")
+           "* %u %?\n%i\n%a" :prepend t)
+          ("j" "Journal" entry
+           (file+olp+datetree e-org-capture-journal-file)
+           "* %U %?\n%i\n%a" :prepend t)))
+
+  ;; Kill capture buffers by default (unless they've been visited).
+  (with-eval-after-load 'org-capture
+    (org-capture-put :kill-buffer t))
+
+  ;; Expand `default-directory'.
+  (advice-add #'org-capture-expand-file :filter-args
+    (lambda (file)
+      :filter-args
+      (if (and (symbolp file) (boundp file))
+          (expand-file-name (symbol-value file) org-directory)
+        file)))
+
+  (add-hook 'org-capture-mode-hook
+    (lambda (&rest _)
+      (setq header-line-format
+            (format "%s%s%s"
+                    (propertize (abbreviate-file-name (buffer-file-name (buffer-base-buffer)))
+                                'face 'font-lock-string-face)
+                    org-eldoc-breadcrumb-separator
+                    header-line-format))))
+
+
+  ;;; Attach.
+  (setq org-attach-store-link-p t
+        org-attach-use-inheritance t)
+
+  (use-package org-attach
+    :straight nil
+    :commands (org-attach-new
+               org-attach-open
+               org-attach-open-in-emacs
+               org-attach-reveal-in-emacs
+               org-attach-url
+               org-attach-set-directory
+               org-attach-sync)
+    :config
+    (unless org-attach-id-dir
+      (setq org-attach-id-dir (expand-file-name ".attach/" org-directory)))
+    (with-eval-after-load 'projectile
+      (add-to-list 'projectile-globally-ignored-directories org-attach-id-dir)))
+
+  ;;; Export.
+  (setq org-export-with-smart-quotes t
+        org-html-validation-link nil
+        org-latex-prefer-user-labels t)
+
+  (use-package ox-pandoc
+    :when (executable-find "pandoc")
+    :after ox
+    :init
+    (add-to-list 'org-export-backends 'pandoc))
+
+  ;; `org-export-to-file' triggers save hooks, which may inadvertantly change
+  ;; the exported output (i.e. formatters).
+  (advice-add #'org-export-to-file :around
+    (lambda (orig-fn &rest args)
+      (let (before-save-hook after-save-hook)
+        (apply orig-fn args))))
+
+  (advice-add #'org-export-to-file :around
+    (lambda (orig-fn &rest args)
+      (if (not org-export-in-background)
+          (apply orig-fn args)
+        (setq org-export-async-init-file (make-temp-file "temp-org-async-export"))
+        (with-temp-file org-export-async-init-file
+          (prin1 `(progn (setq org-export-async-debug ,debug-on-error
+                              load-path ',load-path)
+                        (load ,user-init-file nil t))
+                (current-buffer)))
+        (apply orig-fn args))))
+
+  ;;; Key bindings.
+  (setq org-special-ctrl-a/e t)
+
+  (setq org-M-RET-may-split-line nil
+        org-insert-heading-respect-content t)
+
+  (add-hook 'org-mode-local-vars-hook #'eldoc-mode)
+
+  :config
+  ;; Save target buffer after archiving a node.
+  (setq org-archive-subtree-save-file-p t)
+
+  ;; Prevent modifications made in invisible sections of an org document, as
+  ;; unintended changes can easily go unseen otherwise.
+  (setq org-catch-invisible-edits 'smart)
+
+  ;; Global ID state means we can have ID links anywhere. This is required for
+  ;; `org-brain', however.
+  (setq org-id-locations-file-relative t)
+
+  ;; `org-id' doesn't check if `org-id-locations-file' exists.
+  (advice-add 'org-id-locations-save :before-while
+    (lambda (&rest _)
+      (file-writable-p org-id-locations-file)))
+  (advice-add 'org-id-locations-load :before-while
+    (lambda (&rest _)
+      (file-writable-p org-id-locations-file))))
+
+;;; Pacakges.
+
+(use-package avy)
+
+(use-package htmlize)
+
+(use-package ox-clip)
+
+(use-package org-cliplink)
+
+(use-package toc-org
+  :hook (org-mode . toc-org-enable)
+  :config
+  (setq toc-org-hrefify-default "gh"))
+
+(use-package org-journal
+  :defer t
+  :init
+  (defun e-org-journal ()
+    (when-let (buffer-file-name (buffer-file-name (buffer-base-buffer)))
+      (if (or (featurep 'org-journal)
+              (and (file-in-directory-p
+                    buffer-file-name (expand-file-name org-journal-dir org-directory))
+                   (require 'org-journal nil t)))
+          (org-journal-is-journal))))
+  (add-to-list 'magic-mode-alist '(e-org-journal . org-journal-mode))
+
+  (setq org-journal-dir "journal/"
+        org-journal-cache-file (concat e-cache-dir "org-journal"))
+
+  :config
+  (setq magic-mode-alist (assq-delete-all 'org-journal-is-journal magic-mode-alist))
+
+  (setq org-journal-dir (expand-file-name org-journal-dir org-directory)
+        org-journal-find-file #'find-file)
+
+  (setq org-journal-carryover-items  "TODO=\"TODO\"|TODO=\"PROJ\"|TODO=\"STRT\"|TODO=\"WAIT\"|TODO=\"HOLD\""))
+
+(use-package org-roam
+  :hook (org-load . org-roam-mode)
+  :hook (org-roam-backlinks-mode . turn-on-visual-line-mode)
+  :commands (org-roam-buffer-toggle-display
+             org-roam-dailies-date
+             org-roam-dailies-today
+             org-roam-dailies-tomorrow
+             org-roam-dailies-yesterday)
+  :config
+  (setq org-roam-directory
+        (file-name-as-directory
+         (expand-file-name (or org-roam-directory "roam")
+                           org-directory))
+        org-roam-verbose nil
+        org-roam-buffer-window-parameters '((no-delete-other-windows . t))
+        org-roam-completion-system 'ivy)
+
+  (add-hook 'find-file-hook
+    (lambda (&rest _)
+      (and +org-roam-open-buffer-on-find-file
+           (memq 'org-roam-buffer--update-maybe post-command-hook)
+           (not (window-parameter nil 'window-side))
+           (not (eq 'visible (org-roam-buffer--visibility)))
+           (with-current-buffer (window-buffer)
+             (org-roam-buffer--get-create)))))
+
+  (add-hook 'org-roam-buffer-prepare-hook #'hide-mode-line-mode))
+
+(use-package company-org-roam
+  :after org-roam
+  :config
+  (set-company-backend! 'org-mode '(company-org-roam company-yasnippet company-dabbrev)))
+
+(use-package org-clock
+  :straight nil
+  :commands org-clock-save
+  :init
+  (setq org-clock-persist-file (concat e-etc-dir "org-clock-save.el"))
+  :config
+  (setq org-clock-persist 'history
+        org-clock-in-resume t)
+  (add-hook 'kill-emacs-hook #'org-clock-save))
+
+(use-package org-pdftools
+  :commands org-pdftools-export
+  :init
+  (with-eval-after-load 'org
+    (org-link-set-parameters (or (bound-and-true-p org-pdftools-link-prefix) "pdf")
+                             :follow #'org-pdftools-open
+                             :complete #'org-pdftools-complete-link
+                             :store #'org-pdftools-store-link
+                             :export #'org-pdftools-export)
+    (add-hook 'org-open-link-functions
+      (lambda (link)
+        (let ((regexp "^pdf\\(?:tools\\|view\\):"))
+          (when (string-match-p regexp link)
+            (org-pdftools-open (replace-regexp-in-string regexp "" link))
+            t))))))
+
+(use-package ob-async)
+
+(use-package ob-go
+  :when (executable-find "go"))
+
+(use-package evil-org
+  :straight (:host github
+             :repo "hlissner/evil-org-mode")
+  :hook (org-mode . evil-org-mode)
+  :hook (org-capture-mode . evil-insert-state)
+  :init
+  (defvar evil-org-retain-visual-state-on-shift t)
+  (defvar evil-org-special-o/O '(table-row))
+  (defvar evil-org-use-additional-insert t)
+  :config
+  (add-hook 'evil-org-mode-hook #'evil-normalize-keymaps)
+  (evil-org-set-key-theme))
+
+;;
 ;;; Pass.
 ;;
 
@@ -2217,7 +2576,7 @@
                     collect context))
       (let ((context (make-mu4e-context
                       :name label
-                      :enter-func (lambda () (mu4e-message "Switched to %s" label))
+                      :enter-func (lambda (&rest _) (mu4e-message "Switched to %s" label))
                       :leave-func #'mu4e-clear-caches
                       :match-func
                       (lambda (msg)
