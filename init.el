@@ -25,7 +25,7 @@
   (declare (pure t) (side-effect-free t))
   (if (listp exp) exp (list exp)))
 
-(defun e-path (&rest segments)
+(defun e-path-p (&rest segments)
   (let ((dir (pop segments)))
     (unless segments
       (setq dir (expand-file-name dir)))
@@ -36,7 +36,7 @@
 
 (defun e-glob (&rest segments)
   (let* (case-fold-search
-         (dir (apply #'e-path segments)))
+         (dir (apply #'e-path-p segments)))
     (if (string-match-p "[[*?]" dir)
         (file-expand-wildcards dir t)
       (if (file-exists-p dir)
@@ -44,7 +44,7 @@
 
 (defun e-path (&rest segments)
   (if segments
-      (apply #'e-path segments)
+      (apply #'e-path-p segments)
     (file!)))
 
 ;;
@@ -170,8 +170,27 @@
 ;;; Optimization.
 ;;
 
+;; Disable bidirectional text rendering.
+(setq-default bidi-display-reordering 'left-to-right
+              bidi-paragraph-direction 'left-to-right)
+(setq bidi-inhibit-bpa t)
+
+;; Reduce rendering/line scan work for Emacs by not rendering cursors or regions
+;; in non-focused windows.
+(setq-default cursor-in-non-selected-windows nil)
+(setq highlight-nonselected-windows nil)
+
+(setq fast-but-imprecise-scrolling t)
+
+(setq frame-inhibit-implied-resize t)
+
 ;; Don't ping things that look like domain names.
 (setq ffap-machine-p-known 'reject)
+
+(setq inhibit-compacting-font-caches t)
+
+;; MacOS bloat.
+(setq command-line-ns-option-alist nil)
 
 ;; Defer `tty-run-terminal-initialization'.
 (unless (daemonp)
@@ -202,7 +221,13 @@
 ;;
 
 (setq straight-base-dir e-local-dir
-      straight-repository-branch "develop")
+      straight-repository-branch "develop"
+      straight-cache-autoloads nil
+      straight-check-for-modifications nil
+      straight-enable-package-integration nil
+      straight-vc-git-default-clone-depth 1
+      autoload-compute-prefixes nil
+      straight-fix-org nil)
 
 ;; Ensure `straight.el'.
 (defun e-ensure-straight (&rest _)
@@ -225,7 +250,7 @@
       (insert-file-contents (expand-file-name "bootstrap.el" repo-dir))
       (eval-region (search-forward "(require 'straight)")
                    (point-max)))))
-(e-ensure-straight)
+(e-ensure-straight) ;; TODO Hook this to something?
 
 ;;
 ;;; Use-package.
@@ -1417,9 +1442,6 @@
 (use-package swiper
   :init (setq swiper-action-recenter t))
 
-(use-package amx
-  :init (setq amx-save-file (concat e-cache-dir "amx-items")))
-
 ;;
 ;;; Company.
 ;;
@@ -1613,14 +1635,7 @@
   (setq flycheck-buffer-switch-check-intermediate-buffers t)
 
   ;; Display errors a little quicker.
-  (setq flycheck-display-errors-delay 0.25)
-
-  ;; ESC buffer.
-  (add-hook 'e-escape-hook :append
-    (lambda (&rest _)
-      (when flycheck-mode
-        (ignore-errors (flycheck-buffer))
-        nil))))
+  (setq flycheck-display-errors-delay 0.25))
 
 (use-package flycheck-popup-tip
   :commands (flycheck-popup-tip-show-popup flycheck-popup-tip-delete-popup)
