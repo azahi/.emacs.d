@@ -1055,8 +1055,7 @@
   (setq dired-auto-revert-buffer t
         dired-dwim-target t
         dired-hide-details-hide-symlink-targets nil
-        ;; Always copy/delete recursively.
-        dired-recursive-copies  'always
+        dired-recursive-copies 'always
         dired-recursive-deletes 'top
         image-dired-dir (concat e-cache-dir "image-dired/")
         image-dired-db-file (concat image-dired-dir "db.el")
@@ -1064,6 +1063,8 @@
         image-dired-temp-image-file (concat image-dired-dir "temp-image")
         image-dired-temp-rotate-image-file (concat image-dired-dir "temp-rotate-image")
         image-dired-thumb-size 150)
+
+  (add-hook 'dired-mod-hook 'dired-omit-mode)
 
   (let ((args (list "-ahl" "-v" "--group-directories-first")))
     (setq dired-listing-switches (string-join args " "))
@@ -1075,6 +1076,62 @@
 
   ;; Don't complain about this command being disabled.
   (put 'dired-find-alternate-file 'disabled nil))
+
+(with-eval-after-load 'dired-x
+  (setq dired-omit-verbose nil
+        dired-omit-files
+        (concat dired-omit-files
+                "\\|^.DS_Store\\'"
+                "\\|^.project\\(?:ile\\)?\\'"
+                "\\|^.\\(svn\\|git\\)\\'"
+                "\\|^.ccls-cache\\'"
+                "\\|\\(?:\\.js\\)?\\.meta\\'"
+                "\\|\\.\\(?:elc\\|o\\|pyo\\|swp\\|class\\)\\'"))
+  (setq dired-clean-confirm-killing-deleted-buffers nil)
+  (when-let (cmd (cond (IS-MAC "open")
+                       (IS-LINUX "xdg-open")
+                       (IS-WINDOWS "start")))
+    (setq dired-guess-shell-alist-user
+          `(("\\.\\(?:docx\\|pdf\\|djvu\\|eps\\)\\'" ,cmd)
+            ("\\.\\(?:jpe?g\\|png\\|gif\\|xpm\\)\\'" ,cmd)
+            ("\\.\\(?:xcf\\)\\'" ,cmd)
+            ("\\.csv\\'" ,cmd)
+            ("\\.tex\\'" ,cmd)
+            ("\\.\\(?:mp4\\|mkv\\|avi\\|flv\\|rm\\|rmvb\\|ogv\\)\\(?:\\.part\\)?\\'" ,cmd)
+            ("\\.\\(?:mp3\\|flac\\)\\'" ,cmd)
+            ("\\.html?\\'" ,cmd)
+            ("\\.md\\'" ,cmd)))))
+
+(with-eval-after-load 'dired-aux
+  :config
+  (setq dired-create-destination-dirs 'ask
+        dired-vc-rename-file t))
+
+(use-package dired-git-info
+  :after dired
+  :init
+  (setq dgi-commit-message-format "%h %cs %s"
+        dgi-auto-hide-details-p nil)
+  :config
+  (with-eval-after-load 'wdired
+    (defvar e-dired--git-info-p nil)
+    (advice-add #'wdired-change-to-wdired-mode :before
+      (lambda (&rest _)
+        (setq e-dired--git-info-p (bound-and-true-p dired-git-info-mode))
+        (when e-dired--git-info-p
+          (dired-git-info-mode -1))))
+    (advice-add 'wdired-exit :after
+      (lambda (&rest _))
+        (when e-dired--git-info-p
+          (dired-git-info-mode +1)))
+    (advice-add 'wdired-abort-changes :after
+      (lambda (&rest _))
+        (when e-dired--git-info-p
+          (dired-git-info-mode +1)))
+    (advice-add 'wdired-finish-edit :after
+      (lambda (&rest _))
+        (when e-dired--git-info-p
+          (dired-git-info-mode +1)))))
 
 (use-package dired-rsync
   :general (dired-mode-map "C-c C-r" #'dired-rsync))
@@ -1448,6 +1505,7 @@
           '((counsel-rg . 1)
             (counsel-search . 2)
             (t . 3))))
+
   :config
   ;; Relaxed search.
   (setq ivy-sort-max-size 7500)
