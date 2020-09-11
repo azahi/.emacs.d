@@ -963,6 +963,11 @@
           projectile-require-project-root)
       (projectile-project-root dir)))
 
+  ;; Return t if DIR (defaults to `default-directory') is a valid project.
+  (defun e-project-p (&optional dir)
+    (and (e-project-root dir)
+        t))
+
   ;; Auto-discovery on `projectile-mode' is slow.
   (add-hook 'projectile-relevant-known-projects #'projectile-cleanup-known-projects)
   (add-hook 'projectile-relevant-known-projects #'projectile-discover-projects-in-search-path)
@@ -1103,7 +1108,6 @@
             ("\\.md\\'" ,cmd)))))
 
 (with-eval-after-load 'dired-aux
-  :config
   (setq dired-create-destination-dirs 'ask
         dired-vc-rename-file t))
 
@@ -1132,9 +1136,6 @@
       (lambda (&rest _))
         (when e-dired--git-info-p
           (dired-git-info-mode +1)))))
-
-(use-package dired-rsync
-  :general (dired-mode-map "C-c C-r" #'dired-rsync))
 
 (use-package diredfl
   :hook (dired-mode . diredfl-mode))
@@ -1391,6 +1392,84 @@
 ;;; Ivy.
 ;;
 
+(use-package ivy
+  :hook (emacs-startup . ivy-mode)
+  :init
+  (let ((standard-search-fn #'ivy--regex-plus)
+        (alt-search-fn      #'ivy--regex-fuzzy))
+    (setq ivy-re-builders-alist
+          `((counsel-rg     . ,standard-search-fn)
+            (swiper         . ,standard-search-fn)
+            (swiper-isearch . ,standard-search-fn)
+            (t . ,alt-search-fn))
+          ivy-more-chars-alist
+          '((counsel-rg . 1)
+            (counsel-search . 2)
+            (t . 3))))
+
+  :config
+  ;; Relaxed search.
+  (setq ivy-sort-max-size 7500)
+
+  (setq ivy-height 17
+        ivy-wrap t
+        ivy-fixed-height-minibuffer t
+        projectile-completion-system 'ivy
+        ivy-magic-slash-non-match-action nil
+        ivy-use-virtual-buffers nil
+        ivy-virtual-abbreviate 'full
+        ivy-on-del-error-function #'ignore
+        ivy-use-selectable-prompt t)
+
+  ;; Highlight each `ivy' candidate including the following newline, so that it
+  ;; extends to the right edge of the window.
+  (setf (alist-get 't ivy-format-functions-alist)
+    (lambda (cands)
+      (if (display-graphic-p)
+          (ivy-format-function-line cands)
+        (ivy--format-function-generic
+        (lambda (str)
+          (ivy--add-face (concat "> " str "\n") 'ivy-current-match))
+        (lambda (str)
+          (concat "  " str "\n"))
+        cands
+        ""))))
+
+  ;; Integrate `ivy' with `better-jumper'; ensure a jump point is registered
+  ;; before jumping to new locations with `ivy'.
+  (setf (alist-get 't ivy-hooks-alist)
+        (lambda ()
+          (with-ivy-window
+            (setq e-ivy-origin (point-marker)))))
+  (add-hook 'minibuffer-exit-hook
+    (lambda (&rest _)
+      (and (markerp (bound-and-true-p e-ivy-origin))
+           (not (equal (ignore-errors (with-ivy-window (point-marker)))
+                       e-ivy-origin))
+           (with-current-buffer (marker-buffer e-ivy-origin)
+             (better-jumper-set-jump e-ivy-origin)))
+      (setq e-ivy-origin nil)))
+
+  ;; Disable in `evil-ex'.
+  (advice-add #'evil-ex :around
+    (lambda (orig-fn &rest args)
+      (let ((completion-in-region-function #'completion--in-region))
+        (apply orig-fn args))))
+
+  (define-key! ivy-minibuffer-map
+    "C-o" #'ivy-dispatching-done
+    "M-o" #'hydra-ivy/body))
+
+(use-package ivy-rich
+  :disabled
+  :after (ivy counsel)
+  :init
+  (setq ivy-rich-parse-remote-buffer nil)
+  :config
+  (ivy-rich-mode +1))
+
+(use-package ivy-hydra)
+
 (use-package counsel
   :defer t
   :init
@@ -1418,9 +1497,17 @@
     [remap unicode-chars-list-chars] #'counsel-unicode-char
     [remap yank-pop]                 #'counsel-yank-pop)
   :config
+  (advice-add #'counsel-projectile-find-file-action :around
+    (lambda (orig-fn &rest args)
+      (let ((default-directory (ivy-state-directory ivy-last)))
+        (apply orig-fn args))))
+
   ;; Don't use ^ as initial input. Set this here because `counsel' defines more
   ;; of its own, on top of the defaults.
   (setq ivy-initial-inputs-alist nil)
+
+  (when (stringp counsel-rg-base-command)
+    (setq counsel-rg-base-command (split-string counsel-rg-base-command)))
 
   ;; Integrate with `helpful'.
   (setq counsel-describe-function-function #'helpful-callable
@@ -1438,6 +1525,7 @@
   (add-to-list 'ivy-sort-functions-alist '(counsel-imenu))
 
   ;; `counsel-find-file'.
+  (setq counsel-find-file-ignore-regexp "\\(?:^[#.]\\)\\|\\(?:[#~]$\\)\\|\\(?:^Icon?\\)")
   (dolist (fn '(counsel-rg counsel-find-file))
     (ivy-add-actions
      fn '(("p" (lambda (path) (with-ivy-window (insert (file-relative-name path default-directory))))
@@ -1451,30 +1539,29 @@
 
   (ivy-add-actions 'counsel-file-jump (plist-get ivy--actions-list 'counsel-find-file))
 
+  ;; Change `counsel-file-jump' to use fd or ripgrep, if they are available.
   (advice-add #'counsel--find-return-list :override
-    (lambda (args &rest _)
+    (lambda (args)
       (cl-destructuring-bind (find-program . args)
-          (cond ((when-let (fd (executable-find (or e-projectile-fd-binary "fd")))
-                  (append (list fd
-                                "--color=never" "-E" ".git"
-                                "--type" "file" "--type" "symlink" "--follow")
-                          (if IS-WINDOWS '("--path-separator=/")))))
-                ((executable-find "rg")
-                (append (list "rg" "--files" "--follow" "--color=never" "--hidden" "--no-messages")
-                        (cl-loop for dir in projectile-globally-ignored-directories
-                                  collect "--glob"
-                                  collect (concat "!" dir))))
-                ((cons find-program args)))
+        (cond ((when-let (fd (executable-find (or e-projectile-fd-binary "fd")))
+                 (append (list fd
+                               "--color=never" "-E" ".git"
+                               "--type" "file" "--type" "symlink" "--follow"))))
+              ((executable-find "rg")
+               (append (list "rg" "--files" "--follow" "--color=never" "--hidden" "--no-messages")
+                       (cl-loop for dir in projectile-globally-ignored-directories
+                                collect "--glob"
+                                collect (concat "!" dir))))
+              ((cons find-program args)))
         (counsel--call
-        (cons find-program args)
-        (lambda (&rest _)
-          (goto-char (point-min))
-          (let (files)
-            (while (< (point) (point-max))
-              (push (buffer-substring (line-beginning-position) (line-end-position))
-                    files)
-              (forward-line 1))
-            (nreverse files))))))))
+          (cons find-program args)
+          (lambda ()
+            (goto-char (point-min))
+            (let (files)
+              (while (< (point) (point-max))
+                (push (buffer-substring (line-beginning-position) (line-end-position)) files)
+                (forward-line 1))
+              (nreverse files))))))))
 
 (use-package counsel-projectile
   :defer t
@@ -1486,99 +1573,43 @@
     [remap projectile-ag]               #'counsel-projectile-ag
     [remap projectile-switch-project]   #'counsel-projectile-switch-project)
   :config
+  (setf (alist-get 'projectile-find-file counsel-projectile-key-bindings)
+        (lambda (&rest _)
+          (interactive)
+          (let ((this-command 'counsel-find-file))
+            (call-interactively
+            (cond ((or (file-equal-p default-directory "~")
+                        (file-equal-p default-directory "/")
+                        (when-let (proot (e-project-root))
+                          (file-equal-p proot "~")))
+                    #'counsel-find-file)
+                  ((e-project-p)
+                    (let ((files (projectile-current-project-files)))
+                      (if (<= (length files) ivy-sort-max-size)
+                          #'counsel-projectile-find-file
+                        #'projectile-find-file)))
+
+                  (#'counsel-file-jump))))))
+
   ;; No highlighting of visited files.
-  (ivy-set-display-transformer #'counsel-projectile-find-file nil)
-
-  (setq counsel-projectile-sort-files t))
-
-(use-package ivy
-  :hook (emacs-startup . ivy-mode)
-  :init
-  (let ((standard-search-fn #'e-ivy-prescient-non-fuzzy)
-        (alt-search-fn      #'ivy--regex-fuzzy))
-    (setq ivy-re-builders-alist
-          `((counsel-rg     . ,standard-search-fn)
-            (swiper         . ,standard-search-fn)
-            (swiper-isearch . ,standard-search-fn)
-            (t . ,alt-search-fn))
-          ivy-more-chars-alist
-          '((counsel-rg . 1)
-            (counsel-search . 2)
-            (t . 3))))
-
-  :config
-  ;; Relaxed search.
-  (setq ivy-sort-max-size 7500)
-
-  ;; Load `counsel' early.
-  (require 'counsel nil t)
-
-  (setq ivy-height 17
-        ivy-wrap t
-        ivy-fixed-height-minibuffer t
-        projectile-completion-system 'ivy
-        ivy-magic-slash-non-match-action nil
-        ivy-use-virtual-buffers nil
-        ivy-virtual-abbreviate 'full
-        ivy-on-del-error-function #'ignore
-        ivy-use-selectable-prompt t)
-
-  ;; Disable in `evil-ex'.
-  (advice-add #'evil-ex :around
-    (lambda (orig-fn &rest args)
-      (let ((completion-in-region-function #'completion--in-region))
-        (apply orig-fn args))))
-
-  (define-key! ivy-minibuffer-map
-    "C-o" #'ivy-dispatching-done
-    "M-o" #'hydra-ivy/body))
-
-(use-package ivy-rich
-  :after ivy
-  :config
-  (setq ivy-rich-parse-remote-buffer nil)
-
-  (ivy-rich-mode +1))
-
-(use-package ivy-hydra)
-
-(use-package ivy-prescient
-  :hook (ivy-mode . ivy-prescient-mode)
-  :hook (ivy-prescient-mode . prescient-persist-mode)
-  :init
-  (setq prescient-filter-method '(literal regexp initialism fuzzy))
-  :config
-  (setq ivy-prescient-sort-commands
-        '(:not counsel-ag
-               counsel-buffer-or-recentf
-               counsel-git-grep
-               counsel-grep
-               counsel-imenu
-               counsel-recentf
-               counsel-rg
-               counsel-yank-pop
-               ivy-switch-buffer
-               swiper
-               swiper-isearch)
-        ivy-prescient-retain-classic-highlighting t)
-
-  (defun e-ivy-prescient-non-fuzzy (str)
-    (let ((prescient-filter-method '(literal regexp)))
-      (ivy-prescient-re-builder str)))
-
-  ;; NOTE prescient config duplicated with `company'.
-  (setq prescient-save-file (concat e-cache-dir "prescient-save.el")))
+  (ivy-set-display-transformer #'counsel-projectile-find-file nil))
 
 (use-package flx
   :defer t
   :init (setq ivy-flx-limit 10000))
 
 (use-package wgrep
+  :defer t
   :commands wgrep-change-to-wgrep-mode
   :config (setq wgrep-auto-save-buffer t))
 
 (use-package swiper
+  :defer t
   :init (setq swiper-action-recenter t))
+
+(use-package amx
+  :defer t
+  :init (setq amx-save-file (concat e-cache-dir "amx-items")))
 
 ;;
 ;;; Company.
@@ -1625,61 +1656,6 @@
                       e-company-backend-alist))
         (setf (alist-get mode e-company-backend-alist)
               backends)))))
-
-;;
-;;; Ido.
-;;
-
-(use-package ido
-  :hook (emacs-startup . ido-mode)
-  :hook (ido-mode . ido-everywhere)
-  :hook (ido-mode . ido-ubiquitous-mode)
-  :preface
-  ;; Define the hook manually.
-  (advice-add #'ido-mode :after
-    (lambda (&rest _)
-      (run-hooks 'ido-mode-hook)))
-  :init
-  (setq ido-save-directory-list-file (concat e-cache-dir "ido.last"))
-  :config
-  (push "\\`.DS_Store$" ido-ignore-files)
-  (push "Icon\\?$" ido-ignore-files)
-  (setq ido-ignore-buffers '(" output\\*$"
-                             "\\` "
-                             "^TAGS$"
-                             "^\*Ido"
-                             "^\\*.*Completions\\*$"
-                             "^\\*Buffer"
-                             "^\\*ESS\\*"
-                             "^\\*Ediff"
-                             "^\\*Messages\\*"
-                             "^\\*[Hh]elp"
-                             "^\\*cvs-"
-                             "^\\*tramp"
-                             "_region_")
-        ido-auto-merge-work-directories-length -1
-        ido-confirm-unique-completion t
-        ido-case-fold t
-        ido-create-new-buffer 'always
-        ido-enable-flex-matching t))
-
-
-(use-package ido-completing-read-plus+
-  :straight (:host github :repo "DarwinAwardWinner/ido-completing-read-plus")
-  :hook (ido-mode . ido-ubiquitous-mode))
-
-(use-package ido-vertical-mode
-  :hook ido-mode
-  :config (setq ido-vertical-show-count t))
-
-(use-package ido-sort-mtime
-  :hook (ido-mode . ido-sort-mtime-mode))
-
-(use-package crm-custom
-  :hook (ido-mode . crm-custom-mode))
-
-(use-package flx-ido
-  :hook (ido-mode . flx-ido-mode))
 
 ;;
 ;;; Flyspell.
