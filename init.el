@@ -681,6 +681,25 @@
       ring-bell-function #'ignore
       visible-bell nil)
 
+;; Scrolling.
+
+(setq hscroll-margin 2
+      hscroll-step 1
+      scroll-conservatively 101
+      scroll-margin 0
+      scroll-preserve-screen-position t
+      auto-window-vscroll nil
+      mouse-wheel-scroll-amount '(5 ((shift) . 2))
+      mouse-wheel-progressive-speed nil)
+
+;; Remove hscroll-margin in shells.
+(add-hook 'eshell-mode-hook
+  (lambda (&rest _)
+    (setq hscroll-margin 0)))
+(add-hook 'term-mode-hook
+  (lambda (&rest _)
+    (setq hscroll-margin 0)))
+
 ;;; Cursor.
 
 ;; Bit distracting.
@@ -700,7 +719,7 @@
 
 ;; Frames.
 
-(setq frame-title-format '("%b – Emacs")
+(setq frame-title-format '("Emacs")
       icon-title-format frame-title-format)
 
 ;; "I am once again asking you to stop showing toolbars."
@@ -767,10 +786,6 @@
 (use-package ansi-color
   :init (setq ansi-color-for-comint-mode t))
 
-;; TODO Move to `use-package' somehow.
-(with-eval-after-load 'comint
-  (setq comint-prompt-read-only t))
-
 (use-package compile
   :config
   (setq compilation-always-kill t
@@ -790,34 +805,13 @@
 
   (defvar e-ediff-saved-wconf nil)
   ;; Restore window config after quitting ediff.
-  (add-hook 'ediff-before-setup-hook
+  (add-hook 'ediff-before-setup-hook :append
     (lambda (&rest _)
       (setq e-ediff-saved-wconf (current-window-configuration))))
-  (add-hook 'ediff-quit-hook
+  (add-hook 'ediff-quit-hook :append
     (lambda (&rest _)
       (when (window-configuration-p e-ediff-saved-wconf)
         (set-window-configuration e-ediff-saved-wconf)))))
-
-(use-package hl-line
-  :disabled ; FIXME Temporary disabled.
-  :hook ((prog-mode text-mode conf-mode special-mode) . hl-line-mode)
-  :config
-  ;; Not having to render the hl-line overlay in multiple buffers offers a tiny
-  ;; performance boost.
-  (setq hl-line-sticky-flag nil
-        global-hl-line-sticky-flag nil)
-
-  ;; Temporarily disable `hl-line' when selection is active.
-  (defvar e-hl-line-mode nil)
-  (add-hook 'evil-visual-state-entry-hook
-    (lambda (&rest _)
-      (when hl-line-mode
-        (setq-local e-hl-line-mode t)
-        (hl-line-mode -1))))
-  (add-hook 'evil-visual-state-exit-hook
-    (lambda (&rest _)
-      (when e-hl-line-mode
-        (hl-line-mode +1)))))
 
 (use-package winner
   :hook (emacs-startup . winner-mode))
@@ -839,12 +833,7 @@
         whitespace-display-mappings
         '((tab-mark ?\t [?› ?\t])
           (newline-mark ?\n [?¬ ?\n])
-          (space-mark ?\  [?·] [?.])))
-
-  (add-function :around whitespace-enable-predicate
-    (lambda (orig-fn &rest _)
-      (unless (frame-parameter nil 'parent-frame)
-        (funcall orig-fn)))))
+          (space-mark ?\  [?·] [?.]))))
 
 ;;; External packages.
 
@@ -2555,14 +2544,14 @@
 
 (use-package ob-async)
 
-(use-package ob-go
-  :when (executable-find "go"))
-
 (use-package evil-org
   :straight (:host github
              :repo "hlissner/evil-org-mode")
   :hook (org-mode . evil-org-mode)
   :hook (org-capture-mode . evil-insert-state)
+  :init
+  (unless (display-graphic-p)
+    (setq evil-want-C-i-jump nil))
   :config
   (add-hook 'evil-org-mode-hook #'evil-normalize-keymaps)
   (evil-org-set-key-theme))
