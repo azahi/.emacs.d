@@ -47,6 +47,27 @@
       (apply #'e-path-p segments)
     (file!)))
 
+(defmacro letf! (bindings &rest body)
+  (declare (indent defun))
+  (setq body (macroexp-progn body))
+  (when (memq (car bindings) '(defun defmacro))
+    (setq bindings (list bindings)))
+  (dolist (binding (reverse bindings) (macroexpand body))
+    (let ((type (car binding))
+          (rest (cdr binding)))
+      (setq
+       body (pcase type
+              (`defmacro `(cl-macrolet ((,@rest)) ,body))
+              (`defun `(cl-letf* ((,(car rest) (symbol-function #',(car rest)))
+                                  ((symbol-function #',(car rest))
+                                   (lambda ,(cadr rest) ,@(cddr rest))))
+                         (ignore ,(car rest))
+                         ,body))
+              (_
+               (when (eq (car-safe type) 'function)
+                 (setq type (list 'symbol-function type)))
+               (list 'cl-letf (list (cons type rest)) body)))))))
+
 ;;
 ;;; Variables.
 ;;
@@ -268,6 +289,14 @@
 ;; Activate straight.el integration.
 (setq straight-use-package-by-default t)
 
+(with-eval-after-load 'use-package-core
+  (font-lock-remove-keywords 'emacs-lisp-mode use-package-font-lock-keywords)
+
+  ;; Basically mimic `auto-minor-mode'.
+  (dolist (keyword '(:minor :magic-minor))
+    (setq use-package-keywords
+          (use-package-list-insert keyword use-package-keywords :commands))))
+
 ;;
 ;;; GC.
 ;;
@@ -290,8 +319,7 @@
 ;; Disable the warning "X and Y are the same file".
 (setq find-file-suppress-same-file-warnings t)
 
-;; Create missing directories when we open a file that doesn't exist under a
-;; directory tree that may not exist.
+;; Create missing directories.
 (add-hook 'find-file-not-found-functions
   (lambda (&rest _)
     (unless (file-remote-p buffer-file-name)
@@ -302,7 +330,7 @@
              (progn (make-directory parent-directory 'parents)
                     t))))))
 
-;; Autosaves.
+;; Autosaves. Or rather, the presumed lack of them.
 (setq auto-save-default nil
       create-lockfiles nil
       make-backup-files nil
@@ -313,6 +341,7 @@
 (with-eval-after-load 'tramp
   (add-to-list 'backup-directory-alist (cons tramp-file-name-regexp nil)))
 
+;; Guess mode when saving a file in `fundamental-mode'.
 (add-hook 'after-save-hook
   (lambda (&rest _)
     (when (eq major-mode 'fundamental-mode)
@@ -327,6 +356,10 @@
 (setq-default indent-tabs-mode nil
               tab-width 4)
 
+;; Only indent the line when at BOL or in a line's indentation. Anywhere else,
+;; insert literal indentation.
+(setq-default tab-always-indent nil)
+
 ;; Make `tabify' and `untabify' only affect indentation.
 (setq tabify-regexp "^\t* [ \t]+")
 
@@ -338,10 +371,10 @@
 ;; ...but don't do any wrapping by default.
 (setq-default truncate-lines t)
 
-;; This looks really bad.
+;; Cringe.
 (setq sentence-end-double-space nil)
 
-;; POSIX.
+;; Respect POSIX.
 (setq require-final-newline t)
 
 ;; Default to soft line-wrapping in text modes.
@@ -374,13 +407,22 @@
         (file-truename file)
       file))
   (setq recentf-filename-handlers '(substring-no-properties
-                                     e-recent-file-truename
-                                     abbreviate-file-name)
+                                    e-recent-file-truename
+                                    abbreviate-file-name)
         recentf-save-file (concat e-cache-dir "recentf")
         recentf-auto-cleanup 'never
         recentf-max-menu-items 0
         recentf-max-saved-items 200)
 
+
+  ;; Bump file in recent file list when it written to.
+  (add-hook 'write-file-functions
+    (lambda (&rest _)
+      (when buffer-file-name
+        (recentf-add-file buffer-file-name))
+      nil))
+
+  ;; Add `dired' directory to recentf file list.
   (add-hook 'dired-mode-hook
     (lambda (&rest _)
       (recentf-add-file default-directory)))
@@ -407,16 +449,14 @@
                                else if item collect it)))))
 
 (use-package saveplace
-  :hook (pre-command . save-place-mode)
+  :hook (emacs-startup . save-place-mode)
   :init
   (setq save-place-file (concat e-cache-dir "saveplace")
         save-place-limit 100)
   :config
   (advice-add #'save-place-find-file-hook :after-while
     (lambda (&rest _)
-      (if buffer-file-name (ignore-errors (recentr)))))
-
-  (save-place-mode))
+      (if buffer-file-name (ignore-errors (recentr))))))
 
 (use-package server
   :when (display-graphic-p)
@@ -447,7 +487,12 @@
   :hook (emacs-startup . better-jumper-mode)
   :hook (better-jumper-post-jump . recenter)
   :commands (e-set-jump e-set-jump-maybe)
+  :init
+  (global-set-key [remap evil-jump-forward]  #'better-jumper-jump-forward)
+  (global-set-key [remap evil-jump-backward] #'better-jumper-jump-backward)
+  (global-set-key [remap xref-pop-marker-stack] #'better-jumper-jump-backward)
   :config
+  ;; TODO Map.
   (defun e-set-jump (orig-fn &rest args)
     (better-jumper-set-jump (if (markerp (car args)) (car args)))
     (let ((evil--jumps-jumping t)
@@ -456,7 +501,8 @@
   (advice-add #'kill-current-buffer :around #'e-set-jump)
   (advice-add #'imenu :around #'e-set-jump-a)
 
-  (defun e-set-jump-maybe-a (orig-fn &rest args)
+  ;; TODO Map.
+  (defun e-set-jump-maybe (orig-fn &rest args)
     (let ((origin (point-marker))
           (result
            (let* ((evil--jumps-jumping t)
@@ -468,7 +514,13 @@
            (if (markerp (car args))
                (car args)
              origin))))
-      result)))
+      result))
+
+  ;; Creates a jump point before killing a buffer.
+  (advice-add #'kill-current-buffer :around #'e-set-jump)
+
+  ;; Create a jump point before jumping with `imenu'.
+  (advice-add #'imenu :around #'e-set-jump))
 
 (use-package dtrt-indent
   :hook ((change-major-mode-after-body read-only-mode) . e-detect-indentation)
@@ -481,8 +533,30 @@
       (let ((inhibit-message nil))
         (dtrt-indent-mode +1))))
 
-  ;; Always keep tab-width up-to-date.
-  (push '(t tab-width) dtrt-indent-hook-generic-mapping-list))
+  ;; Enable `dtrt-indent' even in smie modes so that it can update `tab-width',
+  ;; `standard-indent' and `evil-shift-width' there as well.
+  (setq dtrt-indent-run-after-smie t)
+  ;; Reduced from the default of 5000 for slightly faster analysis.
+  (setq dtrt-indent-max-lines 2000)
+
+  ;; Always keep `tab-width' up-to-date.
+  (push '(t tab-width) dtrt-indent-hook-generic-mapping-list)
+
+  ;; Some smie modes throw errors when trying to guess their indentation, like
+  ;; `nim-mode'. This prevents them from leaving Emacs in a broken state."
+  (defvar dtrt-indent-run-after-smie)
+  (advice-add #'dtrt-indent-mode :around
+    (lambda (orig-fn arg)
+      (let ((dtrt-indent-run-after-smie dtrt-indent-run-after-smie))
+        (letf! ((defun symbol-config--guess (beg end)
+                  (funcall symbol-config--guess beg (min end 10000)))
+                (defun smie-config-guess ()
+                  (condition-case e (funcall smie-config-guess)
+                    (error (setq dtrt-indent-run-after-smie t)
+                          (message "[WARNING] Indent detection: %s"
+                                    (error-message-string e))
+                          (message "")))))
+          (funcall orig-fn arg))))))
 
 (use-package editorconfig
   :hook (emacs-startup . editorconfig-mode)
@@ -538,7 +612,7 @@
          (helpful-variable (button-get button 'apropos-symbol)))))))
 
 (use-package imenu
-  :hook (recenter . imenu-after-jump-hook))
+  :hook (imenu-after-jump . recenter))
 
 (use-package smartparens
   :hook (prog-mode . smartparens-mode)
@@ -553,7 +627,7 @@
         sp-highlight-wrap-overlay nil
         sp-highlight-wrap-tag-overlay nil)
   (with-eval-after-load 'evil
-    ;; ...unless we are evil.
+    ;; ...unless `evil-mode'.
     (setq sp-show-pair-from-inside t
           sp-cancel-autoskip-on-backward-movement nil))
 
@@ -592,7 +666,7 @@
         (turn-off-smartparens-mode)))))
 
 (use-package ws-butler
-  :hook (prog-mode . ws-butler-global-mode))
+  :hook (emacs-startup . ws-butler-global-mode))
 
 ;;
 ;;; UX.
@@ -2372,8 +2446,7 @@
   ;; unintended changes can easily go unseen otherwise.
   (setq org-catch-invisible-edits 'smart)
 
-  ;; Global ID state means we can have ID links anywhere. This is required for
-  ;; `org-brain', however.
+  ;; Global ID state means there are ID links anywhere.
   (setq org-id-locations-file-relative t)
 
   ;; `org-id' doesn't check if `org-id-locations-file' exists.
