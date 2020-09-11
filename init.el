@@ -896,7 +896,25 @@
       :major-modes t
       :prefix e-localleader-key
       :non-normal-prefix e-localleader-alt-key
-      ,@args)))
+      ,@args))
+
+  (define-prefix-command 'e-leader 'e-leader-map)
+  (define-key e-leader-map [override-state] 'all)
+
+  ;; Bind `e-leader-key' and `e-leader-alt-key'.
+  (add-hook 'emacs-startup-hook
+    (lambda (&rest _)
+      (let ((map general-override-mode-map))
+        (if (not (featurep 'evil))
+            (progn
+              (cond ((equal e-leader-alt-key "C-c")
+                    (set-keymap-parent e-leader-map mode-specific-map))
+                    ((equal e-leader-alt-key "C-x")
+                    (set-keymap-parent e-leader-map ctl-x-map)))
+              (define-key map (kbd e-leader-alt-key) 'e-leader))
+          (evil-define-key* '(normal visual motion) map (kbd e-leader-key) 'e-leader)
+          (evil-define-key* '(emacs insert) map (kbd e-leader-alt-key) 'e-leader))
+        (general-override-mode +1)))))
 
 (use-package which-key
   :hook (emacs-startup . which-key-mode)
