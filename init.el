@@ -14,6 +14,7 @@
 ;;; External libraries.
 ;;
 
+(require 'cl-lib)
 (require 'subr-x)
 
 ;;
@@ -24,7 +25,7 @@
   (declare (pure t) (side-effect-free t))
   (if (listp exp) exp (list exp)))
 
-(defun e-path-p (&rest segments)
+(defun e-path (&rest segments)
   (let ((dir (pop segments)))
     (unless segments
       (setq dir (expand-file-name dir)))
@@ -35,7 +36,7 @@
 
 (defun e-glob (&rest segments)
   (let* (case-fold-search
-         (dir (apply #'e-path-p segments)))
+         (dir (apply #'e-path segments)))
     (if (string-match-p "[[*?]" dir)
         (file-expand-wildcards dir t)
       (if (file-exists-p dir)
@@ -43,7 +44,7 @@
 
 (defun e-path (&rest segments)
   (if segments
-      (apply #'e-path-p segments)
+      (apply #'e-path segments)
     (file!)))
 
 ;;
@@ -147,6 +148,23 @@
   (lambda (orig-fn &rest args)
     (let ((use-init-file custom-file))
       (apply orig-fn args))))
+
+;;
+;;; Native Compilation.
+;;
+
+;; http://akrl.sdf.org/gccemacs.html
+
+(when (boundp 'comp-eln-load-path)
+  (add-to-list 'comp-eln-load-path (concat e-cache-dir "eln/")))
+
+(with-eval-after-load 'comp
+  (setq comp-async-env-modifier-form
+        `(progn
+           ,comp-async-env-modifier-form
+           (setq comp-eln-load-path ',(bound-and-true-p comp-eln-load-path))))
+  ;; Disable native-compilation for some troublesome packages.
+  (add-to-list 'comp-deferred-compilation-black-list "/evil-collection-vterm\\.el\\'"))
 
 ;;
 ;;; Optimization.
@@ -2458,10 +2476,6 @@
              :repo "hlissner/evil-org-mode")
   :hook (org-mode . evil-org-mode)
   :hook (org-capture-mode . evil-insert-state)
-  :init
-  (defvar evil-org-retain-visual-state-on-shift t)
-  (defvar evil-org-special-o/O '(table-row))
-  (defvar evil-org-use-additional-insert t)
   :config
   (add-hook 'evil-org-mode-hook #'evil-normalize-keymaps)
   (evil-org-set-key-theme))
