@@ -1260,9 +1260,14 @@
         evil-normal-state-cursor 'box
         evil-emacs-state-cursor  'box
         evil-insert-state-cursor 'box)
-  ;; For `evil-collection`.
+
+  ;; `evil-collection'.
   (setq evil-want-integration t
         evil-want-keybinding nil)
+
+  (add-hook 'magit-mode-hook
+    (lambda (&rest _)
+      (setq evil-ex-hl-update-delay 0.25)))
   :config
   (evil-select-search-module 'evil-search-module 'evil-search)
 
@@ -1275,7 +1280,20 @@
   ;; Start help-with-tutorial in Emacs state.
   (advice-add #'help-with-tutorial :after
     (lambda (&rest _)
-      (evil-emacs-state +1))))
+      (evil-emacs-state +1)))
+
+  (with-eval-after-load 'wrep
+    (define-key wgrep-mode-map [remap evil-delte]
+      (lambda (&rest _)
+        (interactive "<R><x><y>")
+        (condition-case _ex
+            (evil-delete beg end type register yank-handler)
+          ('text-read-only
+          (evil-apply-on-block
+            (lambda (beg _)
+              (goto-char beg)
+              (call-interactively #'wgrep-mark-deletion))
+            beg (1- end) nil)))))))
 
 (use-package evil-collection
   :after evil
@@ -2268,6 +2286,35 @@
         geiser-smart-tab-p t))
 
 ;;
+;;; Haskell.
+;;
+
+(with-eval-after-load 'projectile
+  (add-to-list 'projectile-project-root-files "stack.yaml"))
+
+(use-package haskell-mode
+  :init
+  (setq haskell-process-suggest-remove-import-lines t
+        haskell-process-auto-import-loaded-modules t
+        haskell-process-show-overlays nil)
+
+  (add-hook 'haskell-mode-hook #'haskell-collapse-mode)
+
+  (add-hook 'haskell-mode-hook #'interactive-haskell-mode)
+
+  (add-to-list 'completion-ignored-extensions ".hi"))
+
+(use-package lsp-haskell
+  :when (executable-find "haskell-language-server-wrapper")
+  :after lsp-mode
+  :config
+  (setq lsp-haskell-process-path-hie "haskell-language-server-wrapper")
+
+  (add-hook 'haskell-mode-hook
+    (lambda (&rest _)
+      (setq yas-indent-line 'fixed))))
+
+;;
 ;;; Org-mode.
 ;;
 
@@ -2618,8 +2665,7 @@
 
 (use-package company-org-roam
   :after org-roam
-  :config
-  (set-company-backend! 'org-mode '(company-org-roam company-yasnippet company-dabbrev)))
+  :config (set-company-backend! 'org-mode 'company-org-roam))
 
 (use-package org-clock
   :straight nil
