@@ -1647,6 +1647,7 @@
     '((text-mode company-dabbrev company-yasnippet company-ispell)
       (prog-mode company-capf company-yasnippet)
       (conf-mode company-capf company-dabbrev-code company-yasnippet)))
+
   (defun set-company-backend! (modes &rest backends)
     (declare (indent defun))
     (dolist (mode (e-enlist modes))
@@ -1655,7 +1656,47 @@
                 (delq (assq mode e-company-backend-alist)
                       e-company-backend-alist))
         (setf (alist-get mode e-company-backend-alist)
-              backends)))))
+              backends))))
+
+  (defun e-company-backends ()
+    (let (backends)
+      (let ((mode major-mode)
+            (modes (list major-mode)))
+        (while (setq mode (get mode 'derived-mode-parent))
+          (push mode modes))
+        (dolist (mode modes)
+          (dolist (backend (append (cdr (assq mode e-company-backend-alist))
+                                  (default-value 'company-backends)))
+            (push backend backends)))
+        (delete-dups
+        (append (cl-loop for (mode . backends) in e-company-backend-alist
+                          if (or (eq major-mode mode)
+                                (and (boundp mode)
+                                      (symbol-value mode)))
+                          append backends)
+                (nreverse backends))))))
+
+  (defun e-company-init-backends ()
+    (or (memq major-mode '(fundamental-mode special-mode))
+        buffer-read-only
+        (doom-temp-buffer-p (or (buffer-base-buffer) (current-buffer)))
+        (setq-local company-backends (e-company-backends))))
+  (put 'e-company-init-backends 'permanent-local-hook t))
+
+(with-eval-after-load 'company-files
+  (add-to-list 'company-files--regexps "file:\\(\\(?:\\.\\{1,2\\}/\\|~/\\|/\\)[^\]\n]*\\)"))
+
+(with-eval-after-load 'company-tng
+  (add-to-list 'company-frontends 'company-tng-frontend)
+  (define-key! company-active-map
+    "RET"       nil
+    [return]    nil
+    "TAB"       #'company-select-next
+    [tab]       #'company-select-next
+    [backtab]   #'company-select-previous))
+
+(use-package company-dict
+  :config (set-company-backend! 'prog-mode 'company-dict))
 
 ;;
 ;;; Flyspell.
@@ -1914,6 +1955,8 @@
 ;;; LSP.
 ;;
 
+(defvar e-lsp-company-backends 'company-capf)
+
 (use-package lsp-mode
   :commands lsp-install-server
   :init
@@ -1941,12 +1984,22 @@
         (require package nil t))
       (cl-remove-if #'featurep lsp-client-packages)))
 
+  ;; Set up `flycheck-mode' or `flymake-mode', depending on `lsp-diagnostic-package'.
+  (advice-add #'lsp-diagnostics--flycheck-enable :around
+    (lambda (orig-fn &rest args)
+      (if flycheck-checker
+          ;; Respect file/dir/explicit user-defined `flycheck-checker'.
+          (let ((old-checker flycheck-checker))
+            (apply orig-fn args)
+            (setq-local flycheck-checker old-checker))
+        (apply orig-fn args))))
+
   (add-hook 'lsp-completion-mode-hook
     (lambda (&rest _)
       (when lsp-completion-mode
         (set (make-local-variable 'company-backends)
-             (cons 'company-capf
-                   (remove 'company-capf
+             (cons e-lsp-company-backends
+                   (remove e-lsp-company-backends
                            (remq 'company-capf company-backends)))))))
 
   ;; Defer LSP server shutdown.
