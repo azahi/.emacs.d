@@ -2417,6 +2417,28 @@
   :after (python lsp-mode))
 
 ;;
+;;; Shell.
+;;
+
+(use-package sh-script
+  :config
+  (setq sh-indent-after-continuation 'always)
+
+  ;; Recognize function names with dashes in them.
+  (add-to-list 'sh-imenu-generic-expression
+               '(sh (nil "^\\s-*function\\s-+\\([[:alpha:]_-][[:alnum:]_-]*\\)\\s-*\\(?:()\\)?" 1)
+                    (nil "^\\s-*\\([[:alpha:]_-][[:alnum:]_-]*\\)\\s-*()" 1)))
+
+  ;; Autoclose backticks.
+  (sp-local-pair 'sh-mode "`" "`" :unless '(sp-point-before-word-p sp-point-before-same-p)))
+
+(use-package company-shell
+  :after sh-script
+  :config
+  (set-company-backend! 'sh-mode '(company-shell company-files))
+  (setq company-shell-delete-duplicates t))
+
+;;
 ;;; Org-mode.
 ;;
 
