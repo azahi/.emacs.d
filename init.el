@@ -290,14 +290,6 @@
 ;; Activate straight.el integration.
 (setq straight-use-package-by-default t)
 
-(with-eval-after-load 'use-package-core
-  (font-lock-remove-keywords 'emacs-lisp-mode use-package-font-lock-keywords)
-
-  ;; Basically mimic `auto-minor-mode'.
-  (dolist (keyword '(:minor :magic-minor))
-    (setq use-package-keywords
-          (use-package-list-insert keyword use-package-keywords :commands))))
-
 ;;
 ;;; GC.
 ;;
@@ -1694,10 +1686,13 @@
                           append backends)
                 (nreverse backends))))))
 
+  (defun e-temp-buffer-p (buf)
+    (equal (substring (buffer-name buf) 0 1) " "))
+
   (defun e-company-init-backends ()
     (or (memq major-mode '(fundamental-mode special-mode))
         buffer-read-only
-        (doom-temp-buffer-p (or (buffer-base-buffer) (current-buffer)))
+        (e-temp-buffer-p (or (buffer-base-buffer) (current-buffer)))
         (setq-local company-backends (e-company-backends))))
   (put 'e-company-init-backends 'permanent-local-hook t))
 
@@ -1837,6 +1832,7 @@
 (use-package magit
   :commands magit-file-delete
   :init
+  (setq magit-auto-revert-mode nil)
   ;; Must be set early to prevent ~/.emacs.d/transient from being created
   (setq transient-levels-file  (concat e-etc-dir "transient/levels")
         transient-values-file  (concat e-etc-dir "transient/values")
@@ -2313,6 +2309,112 @@
   (add-hook 'haskell-mode-hook
     (lambda (&rest _)
       (setq yas-indent-line 'fixed))))
+
+;;
+;;; Python.
+;;
+
+(use-package python
+  :when (executable-find "python")
+  :mode ("[./]flake8\\'" . conf-mode)
+  :mode ("/Pipfile\\'" . conf-mode)
+  :hook (python-mode-local-vars . lsp)
+  :init
+  (setq python-environment-directory e-cache-dir
+        python-indent-guess-indent-offset-verbose nil)
+  :config
+  (setq python-indent-guess-indent-offset-verbose nil)
+
+  ;; Default to Python 3 and prefer the versioned Python binaries.
+  (when (and (executable-find "python3")
+             (string= python-shell-interpreter "python"))
+    (setq python-shell-interpreter "python3"))
+
+  ;; Use the correct Python executables for Flycheck.
+  (add-hook 'python-mode-hook
+    (lambda (&rest _)
+      (let ((executable python-shell-interpreter))
+        (save-excursion
+          (goto-char (point-min))
+          (save-match-data
+            (when (or (looking-at "#!/usr/bin/env \\(python[^ \n]+\\)")
+                      (looking-at "#!\\([^ \n]+/python[^ \n]+\\)"))
+              (setq executable (substring-no-properties (match-string 1))))))
+        ;; Try to compile using the appropriate version of Python for
+        ;; the file.
+        (setq-local flycheck-python-pycompile-executable executable)
+        ;; In case of virtualenv.
+        (setq-local flycheck-python-pylint-executable "pylint")
+        (setq-local flycheck-python-flake8-executable "flake8"))))
+
+  (define-key python-mode-map (kbd "DEL") nil) ;; `smartparens' fix.
+  (sp-local-pair 'python-mode "'" nil
+                 :unless '(sp-point-before-word-p
+                           sp-point-after-word-p
+                           sp-point-before-same-p))
+
+  (add-hook 'python-mode-hook
+    (lambda (&rest _)
+      (setq tab-width python-indent-offset))))
+
+(use-package pyimport
+  :after python
+  :defer t)
+
+(use-package py-isort
+  :when (executable-find "isort")
+  :after python
+  :defer t)
+
+(use-package nose
+  :when (executable-find "nose")
+  :after python
+  :commands nose-mode
+  :preface (defvar nose-mode-map (make-sparse-keymap))
+  :hook (nose-mode . evil-normalize-keymaps))
+
+(use-package python-pytest
+  :when (executable-find "pytest")
+  :after python
+  :defer t)
+
+(use-package pipenv
+  :when (executable-find "pipenv")
+  :after python
+  :commands pipenv-project-p
+  :hook (python-mode . pipenv-mode)
+  :init (setq pipenv-with-projectile nil))
+
+(use-package pyvenv
+  :when (executable-find "pyenv")
+  :after python
+  :init
+  :hook (python-mode-local-vars . pyvenv-track-virtualenv)
+  :config
+  (add-to-list 'global-mode-string
+               '(pyvenv-virtual-env-name (" venv:" pyvenv-virtual-env-name " "))
+               'append))
+
+(use-package pyenv-mode
+  :when (executable-find "pyenv")
+  :after python
+  :config
+  (pyenv-mode +1)
+  (add-to-list 'exec-path (expand-file-name "shims" (or (getenv "PYENV_ROOT") "~/.pyenv"))))
+
+(use-package poetry
+  :when (executable-find "poetry")
+  :after python)
+
+(use-package cython-mode
+  :when (executable-find "cython")
+  :init (setq cython-default-compile-format "cython -a %s"))
+
+(use-package flycheck-cython
+  :after cython-mode)
+
+(use-package lsp-pyright
+  :after (python lsp-mode))
 
 ;;
 ;;; Org-mode.
