@@ -2832,11 +2832,29 @@
   (evil-org-set-key-theme))
 
 ;;
+;;; Calfw.
+;;
+
+(use-package calfw
+  :commands cfw:open-calendar-buffer)
+
+(use-package calfw-org
+  :commands (cfw:open-org-calendar
+             cfw:org-create-source
+             cfw:org-create-file-source
+             cfw:open-org-calendar-withkevin
+             my-open-calendar))
+
+(use-package calfw-cal
+  :commands (cfw:cal-create-source))
+
+;;
 ;;; Pass.
 ;;
 
 (use-package auth-source-pass
-  :straight (:host github :repo "DamienCassou/auth-password-store")
+  :straight (:host github
+             :repo "DamienCassou/auth-password-store")
   :config (auth-source-pass-enable))
 
 (use-package pass
@@ -2861,7 +2879,63 @@
 (use-package ivy-pass)
 
 ;;
-;;; mu4e.
+;;; Elfeed.
+;;
+
+(use-package elfeed
+  :commands elfeed
+  :init
+  (setq elfeed-db-directory (concat e-local-dir "elfeed/db/")
+        elfeed-enclosure-default-dir (concat e-local-dir "elfeed/enclosures/"))
+  :config
+  (setq elfeed-search-filter "@2-week-ago "
+        elfeed-show-entry-switch #'pop-to-buffer
+        shr-max-image-proportion 0.8)
+
+  (make-directory elfeed-db-directory t)
+
+  ;; Keybindings.
+  (with-eval-after-load 'elfeed-show
+    (defun e-elfeed-open (entry)
+      (interactive (list (elfeed-search-selected :ignore-region)))
+      (when (elfeed-entry-p entry)
+        (elfeed-untag entry 'unread)
+        (elfeed-search-update-entry entry)
+        (elfeed-show-entry entry)))
+    (defun e-elfeed-next ()
+      (interactive)
+      (funcall elfeed-show-entry-delete)
+      (with-current-buffer (elfeed-search-buffer)
+        (forward-line)
+        (call-interactively 'e-elfeed-open)))
+    (defun e-elfeed-prev ()
+      (interactive)
+      (funcall elfeed-show-entry-delete)
+      (with-current-buffer (elfeed-search-buffer)
+        (forward-line -1)
+        (call-interactively 'e-elfeed-open)))
+
+    (define-key! elfeed-show-mode-map
+      [remap next-buffer]     #'e-elfeed-next
+      [remap previous-buffer] #'e-elfeed-prev)
+
+    (evil-define-key 'normal elfeed-search-mode-map
+      "q" #'elfeed-kill-buffer
+      "r" #'elfeed-search-update--force
+      (kbd "M-RET") #'elfeed-search-browse-url)))
+
+(use-package elfeed-org
+  :after elfeed
+  :preface (setq rmh-elfeed-org-files (list "elfeed.org"))
+  :config
+  (and (let ((default-directory org-directory))
+         (setq rmh-elfeed-org-files
+               (cl-remove-if-not
+                #'file-exists-p (mapcar #'expand-file-name rmh-elfeed-org-files))))
+       (elfeed-org)))
+
+;;
+;;; Mu4e.
 ;;
 
 (defvar e-mu4e-backend 'mbsync)
